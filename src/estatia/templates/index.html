@@ -4,46 +4,72 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{{ title }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Newsreader:opsz,wght@6..72,500;6..72,600;6..72,700&display=swap"
+      rel="stylesheet"
+    />
     <style>
       :root {
-        --bg: #f4efe4;
-        --bg-strong: #e3d4b5;
-        --panel: rgba(255, 252, 246, 0.92);
-        --ink: #1f1b16;
-        --muted: #5f564a;
-        --accent: #87643d;
-        --line: rgba(31, 27, 22, 0.1);
+        --bg: #f5efe7;
+        --bg-strong: #dfd1bf;
+        --panel: rgba(255, 251, 246, 0.9);
+        --panel-strong: rgba(255, 254, 251, 0.98);
+        --ink: #1f1a16;
+        --muted: #65594d;
+        --accent: #8b6844;
+        --accent-strong: #6f4f31;
+        --line: rgba(31, 26, 22, 0.1);
+        --shadow: 0 24px 60px rgba(58, 42, 26, 0.11);
       }
 
       * {
         box-sizing: border-box;
       }
 
+      html {
+        font-size: 16px;
+      }
+
       body {
         margin: 0;
         min-height: 100vh;
-        font-family: Georgia, "Times New Roman", serif;
+        font-family: "Manrope", sans-serif;
         color: var(--ink);
         background:
-          radial-gradient(circle at top left, rgba(255, 255, 255, 0.5), transparent 40%),
+          radial-gradient(circle at top left, rgba(255, 255, 255, 0.58), transparent 28%),
+          radial-gradient(circle at bottom right, rgba(139, 104, 68, 0.09), transparent 26%),
           linear-gradient(135deg, var(--bg), var(--bg-strong));
+        line-height: 1.6;
+        letter-spacing: -0.01em;
       }
 
       .shell {
         width: min(1180px, calc(100vw - 32px));
-        margin: 32px auto;
+        margin: 40px auto;
         display: grid;
         grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
-        gap: 24px;
+        gap: 26px;
       }
 
       .panel {
         background: var(--panel);
         border: 1px solid var(--line);
-        border-radius: 28px;
-        padding: 24px;
-        box-shadow: 0 24px 60px rgba(45, 33, 18, 0.08);
-        backdrop-filter: blur(10px);
+        border-radius: 30px;
+        padding: 28px;
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(14px);
+        position: relative;
+        overflow: hidden;
+      }
+
+      .panel::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), transparent 32%);
+        pointer-events: none;
       }
 
       h1,
@@ -54,46 +80,118 @@
         margin-top: 0;
       }
 
+      h1,
+      h2,
+      h3,
+      h4 {
+        font-family: "Newsreader", serif;
+        letter-spacing: -0.035em;
+        line-height: 0.98;
+        font-weight: 600;
+      }
+
+      h1 {
+        margin-bottom: 14px;
+        font-size: clamp(2.4rem, 4vw, 3.45rem);
+      }
+
+      h2 {
+        margin-bottom: 12px;
+        font-size: clamp(1.6rem, 2.4vw, 2.15rem);
+      }
+
+      h3 {
+        margin-bottom: 10px;
+        font-size: 1.3rem;
+      }
+
+      p {
+        margin-bottom: 0;
+      }
+
       .label {
         display: block;
         margin-bottom: 10px;
-        font-size: 0.85rem;
-        letter-spacing: 0.08em;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.16em;
         text-transform: uppercase;
         color: var(--muted);
       }
 
+      .intro {
+        margin-bottom: 20px;
+      }
+
+      .intro .label {
+        margin-bottom: 14px;
+      }
+
+      .intro-copy {
+        max-width: 30rem;
+        font-size: 1rem;
+        color: var(--muted);
+      }
+
+      form {
+        display: grid;
+        gap: 14px;
+      }
+
       textarea {
         width: 100%;
-        min-height: 260px;
-        padding: 18px;
-        border-radius: 18px;
+        min-height: 280px;
+        padding: 20px 22px;
+        border-radius: 22px;
         border: 1px solid var(--line);
-        background: #fffdf8;
+        background: rgba(255, 255, 253, 0.94);
         color: var(--ink);
-        font: inherit;
+        font: 500 0.98rem/1.75 "Manrope", sans-serif;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
         resize: vertical;
+        transition: border-color 180ms ease, box-shadow 180ms ease, background 180ms ease;
+      }
+
+      textarea::placeholder {
+        color: #8a7c6e;
+      }
+
+      textarea:focus {
+        outline: none;
+        border-color: rgba(111, 79, 49, 0.45);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.75),
+          0 0 0 4px rgba(139, 104, 68, 0.08);
+        background: #fffdf9;
       }
 
       button {
         width: 100%;
         border: 0;
         border-radius: 999px;
-        padding: 14px 18px;
-        background: var(--ink);
-        color: #f9f4eb;
-        font: inherit;
+        padding: 16px 20px;
+        background: linear-gradient(135deg, var(--accent-strong), var(--ink));
+        color: #fcf7ef;
+        font: 700 0.95rem/1 "Manrope", sans-serif;
+        letter-spacing: 0.02em;
         cursor: pointer;
-        transition: transform 180ms ease, opacity 180ms ease;
+        box-shadow: 0 14px 26px rgba(49, 33, 18, 0.2);
+        transition: transform 180ms ease, opacity 180ms ease, box-shadow 180ms ease;
       }
 
       button:hover {
         transform: translateY(-1px);
+        box-shadow: 0 18px 30px rgba(49, 33, 18, 0.24);
       }
 
       button:disabled {
         opacity: 0.6;
         cursor: wait;
+      }
+
+      .supporting-copy {
+        font-size: 0.92rem;
+        color: var(--muted);
       }
 
       .hint,
@@ -102,52 +200,97 @@
         color: var(--muted);
       }
 
+      .hint {
+        font-size: 0.94rem;
+        line-height: 1.72;
+      }
+
+      .error {
+        margin-top: 22px;
+        padding: 18px 20px;
+        border-radius: 20px;
+        background: rgba(124, 61, 40, 0.06);
+        border: 1px solid rgba(124, 61, 40, 0.12);
+      }
+
+      .error p {
+        font-size: 0.95rem;
+      }
+
       .trace {
-        padding-left: 18px;
+        padding-left: 20px;
+        margin-top: 12px;
         margin-bottom: 0;
       }
 
+      .trace {
+        display: grid;
+        gap: 8px;
+      }
+
       .report .hero {
-        padding-bottom: 20px;
+        padding-bottom: 22px;
         border-bottom: 1px solid var(--line);
       }
 
       .report .eyebrow {
         text-transform: uppercase;
-        letter-spacing: 0.12em;
+        letter-spacing: 0.15em;
         color: var(--muted);
-        font-size: 0.78rem;
+        font-size: 0.72rem;
+        font-weight: 700;
+        margin-bottom: 14px;
       }
 
       .report .meta {
         display: flex;
         flex-wrap: wrap;
-        gap: 12px;
-        font-size: 0.92rem;
+        gap: 10px 14px;
+        font-size: 0.9rem;
+        font-weight: 600;
         color: var(--muted);
       }
 
       .cards {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-        gap: 16px;
-        margin: 24px 0;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 18px;
+        margin: 28px 0;
       }
 
       .card {
         border: 1px solid var(--line);
-        border-radius: 22px;
-        padding: 18px;
-        background: rgba(255, 255, 255, 0.72);
+        border-radius: 24px;
+        padding: 20px;
+        background: var(--panel-strong);
+        box-shadow: 0 14px 28px rgba(58, 42, 26, 0.06);
+      }
+
+      .card h3,
+      .card h4 {
+        margin-bottom: 12px;
+      }
+
+      .card p {
+        margin-bottom: 8px;
+      }
+
+      .card strong {
+        font-weight: 700;
       }
 
       .price {
-        font-size: 1.2rem;
+        display: inline-block;
+        margin: 6px 0 10px;
+        font-size: 1.24rem;
+        font-weight: 800;
+        color: var(--ink);
       }
 
       .listing-link {
         color: var(--accent);
         text-decoration: none;
+        font-weight: 700;
         border-bottom: 1px solid rgba(135, 100, 61, 0.35);
       }
 
@@ -160,6 +303,15 @@
         display: grid;
         place-items: center;
         text-align: center;
+      }
+
+      .empty h2 {
+        margin-bottom: 10px;
+      }
+
+      .empty p {
+        max-width: 24rem;
+        color: var(--muted);
       }
 
       .loading-shell {
@@ -180,9 +332,9 @@
 
       .loading-card {
         width: min(520px, 100%);
-        padding: 28px;
-        border-radius: 28px;
-        background: rgba(255, 252, 246, 0.96);
+        padding: 30px;
+        border-radius: 30px;
+        background: rgba(255, 252, 246, 0.97);
         border: 1px solid rgba(31, 27, 22, 0.08);
         box-shadow: 0 30px 80px rgba(26, 18, 10, 0.18);
       }
@@ -204,11 +356,13 @@
       }
 
       .loading-title {
+        font-size: 1.8rem;
         margin-bottom: 6px;
       }
 
       .loading-copy {
         color: var(--muted);
+        font-size: 0.96rem;
         margin-bottom: 0;
       }
 
@@ -231,6 +385,8 @@
 
       .loading-status {
         color: var(--muted);
+        font-size: 0.94rem;
+        font-weight: 600;
         min-height: 24px;
       }
 
@@ -255,6 +411,17 @@
       @media (max-width: 900px) {
         .shell {
           grid-template-columns: 1fr;
+          width: min(100vw - 24px, 1180px);
+          margin: 20px auto 32px;
+          gap: 18px;
+        }
+
+        .panel {
+          padding: 22px;
+        }
+
+        h1 {
+          font-size: 2.25rem;
         }
       }
     </style>
@@ -275,17 +442,20 @@
     </div>
     <main class="shell">
       <section class="panel">
-        <p class="label">Real estate brief</p>
-        <h1>{{ title }}</h1>
-        <p class="hint">
-          Enter a property request in plain language. The workflow parses it with Pydantic-backed
-          structured output, runs the LangGraph flow, evaluates the result, and renders an HTML
-          recommendation.
-        </p>
+        <div class="intro">
+          <p class="label">Real estate brief</p>
+          <h1>{{ title }}</h1>
+          <p class="intro-copy">
+            Write the request the way a client would describe it. The workflow structures the input,
+            searches for listings, relaxes constraints when the market is too tight, and prepares a final recommendation.
+          </p>
+        </div>
         <form id="search-form" method="post" action="/run">
           <label class="label" for="raw_text">User input</label>
           <textarea id="raw_text" name="raw_text">{{ raw_text }}</textarea>
-          <p class="hint">The current app uses seeded listings and neighborhood insights. Scraping and WhatsApp are scaffolded for the next iteration.</p>
+          <p class="supporting-copy">
+            The current version prioritizes listing retrieval and recommendation quality. WhatsApp validation remains on standby.
+          </p>
           <button id="submit-button" type="submit">Run workflow</button>
         </form>
         {% if error %}
