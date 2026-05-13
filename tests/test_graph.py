@@ -3,12 +3,35 @@ from estatia.graph import build_graph
 from estatia.models import (
     Budget,
     EvalResult,
+    Listing,
+    ListingLocation,
+    ListingProperty,
     Location,
     Recommendation,
+    NewsInsight,
     SellerReport,
+    PropertyType,
     UserRequest,
 )
-from estatia.services import SeedListingService, SeedNewsService, Services, StandbyWhatsAppService
+from estatia.services import Services, StandbyWhatsAppService
+
+
+class StaticListingService:
+    def __init__(self, listings: list[Listing]) -> None:
+        self.listings = listings
+
+    def search(self, request: UserRequest) -> list[Listing]:
+        if request.location.neighborhood == "Atlantis":
+            return []
+        return self.listings
+
+
+class StaticNewsService:
+    def __init__(self, insights: list[NewsInsight]) -> None:
+        self.insights = insights
+
+    def search(self, request: UserRequest, listings: list[Listing]) -> list[NewsInsight]:
+        return self.insights
 
 
 class DummyWorkflow:
@@ -32,7 +55,7 @@ class DummyWorkflow:
             required_fixes=[] if listings else ["Need more options"],
         )
 
-    def build_report(self, request, listings, news, evaluation):
+    def build_report(self, request, listings, news, evaluation, language):
         top = listings[0]
         return SellerReport(
             title="Top match",
@@ -51,17 +74,29 @@ class DummyWorkflow:
             budget_fit=["Stays under max budget."],
             market_notes=["Inventory is thin but usable."],
             next_steps=["Book a visit."],
+            language="en",
         )
 
 
 def test_graph_reaches_seller_node_with_seed_services():
     workflow = DummyWorkflow()
+    listings = [
+        Listing(
+            id="bog-apt-001",
+            source="test",
+            url="https://example.com/listings/bog-apt-001",
+            title="Modern apartment near Parque 93",
+            price=2800000,
+            location=ListingLocation(city="Bogota", neighborhood="Teusaquillo"),
+            property=ListingProperty(type=PropertyType.APARTMENT, bedrooms=2, bathrooms=2),
+        )
+    ]
     services = Services(
         intake=workflow,
         evaluation=workflow,
         seller=workflow,
-        listing=SeedListingService(),
-        news=SeedNewsService(),
+        listing=StaticListingService(listings),
+        news=StaticNewsService([]),
         whatsapp=StandbyWhatsAppService(),
     )
     settings = Settings(openai_api_key="test", max_retries=1)
@@ -95,7 +130,7 @@ def test_graph_no_results_feedback_mentions_constraint_relaxation():
                 required_fixes=["Raise budget"],
             )
 
-        def build_report(self, request, listings, news, evaluation):
+        def build_report(self, request, listings, news, evaluation, language):
             return SellerReport(
                 title="unused",
                 summary="unused",
@@ -110,8 +145,8 @@ def test_graph_no_results_feedback_mentions_constraint_relaxation():
         intake=workflow,
         evaluation=workflow,
         seller=workflow,
-        listing=SeedListingService(),
-        news=SeedNewsService(),
+        listing=StaticListingService([]),
+        news=StaticNewsService([]),
         whatsapp=StandbyWhatsAppService(),
     )
     settings = Settings(openai_api_key="test", max_retries=0)

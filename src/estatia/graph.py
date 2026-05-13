@@ -1,292 +1,140 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
 from estatia.config import Settings
-from estatia.models import EvalResult, Listing, NewsInsight, SellerReport, TraceEvent, UserRequest
+from estatia.models import AgentState, Requirement, Property, NewsItem, Proposal
 from estatia.services import Services
 
 logger = logging.getLogger("estatia.graph")
 
 
-class GraphState(TypedDict, total=False):
-    raw_text: str
-    language: str
-    request: UserRequest
-    listings: list[Listing]
-    news: list[NewsInsight]
-    validation: list[str]
-    evaluation: EvalResult
-    report: SellerReport
-    html: str
-    retries: int
-    feedback: str
-    run_news: bool
-    trace: list[TraceEvent]
-
-
-def append_trace(state: GraphState, node: str, message: str) -> list[TraceEvent]:
-    trace = list(state.get("trace", []))
-    trace.append(TraceEvent(node=node, message=message))
-    return trace
-
-
-def normalize_text(value: str | None) -> str:
-    if not value:
-        return ""
-    return value.strip().lower()
-
-
 def build_graph(services: Services, settings: Settings):
-    graph = StateGraph(GraphState)
+    graph = StateGraph(AgentState)
 
-    def intake_node(state: GraphState) -> GraphState:
+    def intake_node(state: AgentState) -> dict:
         logger.info("Node intake:start")
-        request = services.intake.parse_request(state["raw_text"])
-        logger.info(
-            "Node intake:done city=%s neighborhood=%s budget_max=%s intent=%s",
-            request.location.city,
-            request.location.neighborhood,
-            request.budget.max,
-            request.intent.value,
-        )
+        requirements = services.intake.parse_request(state.user_text)
+        logger.info("Node intake:done requirements_found=%s", len(requirements) if requirements else 0)
         return {
-            "request": request,
-            "retries": state.get("retries", 0),
-            "trace": append_trace(state, "intake", "Parsed user input into a structured request."),
+            "requirements": requirements,
+            "retries": state.retries,
         }
 
-    def coordinator_node(state: GraphState) -> GraphState:
+    def coordinator_node(state: AgentState) -> dict:
         logger.info("Node coordinator:start")
-        request = state["request"]
-        run_news = settings.enable_news_agent and not bool(request.location.neighborhood)
-        logger.info("Node coordinator:done run_news=%s retries=%s", run_news, state.get("retries", 0))
+        run_news = False
+        if state.requirements:
+            # Example logic: if the location lacks specific details or is broad
+            location = state.requirements[0].location.lower()
+            if "bogota" in location or "medellin" in location:
+                run_news = True
+        logger.info("Node coordinator:done run_news=%s retries=%s", run_news, state.retries)
         return {
             "run_news": run_news,
-            "trace": append_trace(
-                state,
-                "coordinator",
-                "Prepared routing decisions for scraping, news, and validation.",
-            ),
         }
 
-    def scraping_node(state: GraphState) -> GraphState:
+    def scraping_node(state: AgentState) -> dict:
         logger.info("Node scraper:start")
-        listings = services.listing.search(state["request"])
-        logger.info("Node scraper:done listings=%s", len(listings))
+        properties = []
         feedback = ""
-        if not listings:
-            request = state["request"]
-            feedback = "No listings matched the current constraints."
-            feedback += (
-                " Relax the smallest number of constraints needed to recover viable matches."
-            )
-            if request.budget.max:
-                feedback += (
-                    " If the selected neighborhood is correct but the budget is too low, "
-                    "increase budget.max to the nearest viable market range."
-                )
-            feedback += (
-                " The agent may also widen or narrow the search area, relax property type, "
-                "reduce room/size constraints, or move secondary must-have filters into nice_to_have."
-            )
+        
+        if state.requirements:
+            properties = services.listing.search(state.requirements[0])
+            
+        logger.info("Node scraper:done properties=%s", len(properties) if properties else 0)
+        
+        if not properties:
+            feedback = "No properties matched the current requirements."
+            
         return {
-            "listings": listings,
+            "properties": properties,
             "feedback": feedback,
-            "trace": append_trace(
-                state,
-                "scraper",
-                f"Found {len(listings)} listing(s) after applying filters.",
-            ),
         }
 
-    def chilling_node(state: GraphState) -> GraphState:
+    def chilling_node(state: AgentState) -> dict:
         logger.info("Node chilling:start")
-        retry_count = state.get("retries", 0) + 1
-        request = services.intake.chill_request(state["request"], state.get("feedback", ""))
-        logger.info(
-            "Node chilling:done retry=%s new_budget_max=%s new_neighborhood=%s",
-            retry_count,
-            request.budget.max,
-            request.location.neighborhood,
-        )
+        retry_count = state.retries + 1
+        requirements = None
+        if state.requirements:
+            requirements = [services.intake.chill_request(state.requirements[0], state.feedback)]
+        logger.info("Node chilling:done retry=%s", retry_count)
         return {
-            "request": request,
+            "requirements": requirements,
             "retries": retry_count,
-            "trace": append_trace(
-                state,
-                "chilling",
-                "Relaxed the request after an empty search result.",
-            ),
         }
 
-    def news_node(state: GraphState) -> GraphState:
+    def news_node(state: AgentState) -> dict:
         logger.info("Node news:start")
-        news = services.news.search(state["request"], state.get("listings", []))
-        logger.info("Node news:done insights=%s", len(news))
+        news_items = []
+        if state.requirements:
+            news_items = services.news.search(state.requirements[0], state.properties or [])
+        logger.info("Node news:done insights=%s", len(news_items))
         return {
-            "news": news,
-            "trace": append_trace(
-                state,
-                "news",
-                f"Collected {len(news)} neighborhood insight(s).",
-            ),
+            "news_items": news_items,
         }
 
-    def skip_news_node(state: GraphState) -> GraphState:
+    def skip_news_node(state: AgentState) -> dict:
         logger.info("Node news-skip:done")
         return {
-            "news": [],
-            "trace": append_trace(state, "news-skip", "Skipped the news agent for a specific neighborhood."),
+            "news_items": [],
         }
 
-    def whatsapp_node(state: GraphState) -> GraphState:
+    def whatsapp_node(state: AgentState) -> dict:
         logger.info("Node whatsapp:start")
-        validation = services.whatsapp.validate(state.get("listings", []))
+        validation = services.whatsapp.validate(state.properties or [])
         logger.info("Node whatsapp:done validations=%s", len(validation))
-        return {
-            "validation": validation,
-            "trace": append_trace(state, "whatsapp", "Recorded WhatsApp validation status."),
-        }
+        return {} # Placeholder for validation state if added to AgentState later
 
-    def evaluator_node(state: GraphState) -> GraphState:
+    def evaluator_node(state: AgentState) -> dict:
         logger.info("Node evaluator:start")
         evaluation = services.evaluation.evaluate(
-            request=state["request"],
-            listings=state.get("listings", []),
-            news=state.get("news", []),
+            request=state.requirements[0] if state.requirements else None,
+            listings=state.properties or [],
+            news=state.news_items or [],
             threshold=settings.evaluation_threshold,
         )
-        logger.info(
-            "Node evaluator:done score=%.2f passed=%s",
-            evaluation.score,
-            evaluation.passed,
-        )
+        logger.info("Node evaluator:done passed=%s", evaluation.passed)
         return {
-            "evaluation": evaluation,
-            "feedback": "; ".join(evaluation.required_fixes),
-            "trace": append_trace(
-                state,
-                "evaluator",
-                f"Scored candidate set at {evaluation.score:.2f}.",
-            ),
+            "feedback": "; ".join(evaluation.required_fixes) if not evaluation.passed else "",
+            # Needs evaluation state added to AgentState to store full result
         }
 
-    def seller_node(state: GraphState) -> GraphState:
-        logger.info("Node seller:start listings=%s", len(state.get("listings", [])))
-        if state.get("listings"):
-            report = services.seller.build_report(
-                request=state["request"],
-                listings=state.get("listings", []),
-                news=state.get("news", []),
-                evaluation=state["evaluation"],
-                language=state.get("language", "en"),
-            )
-        else:
-            is_spanish = state.get("language", "en") == "es"
-            report = SellerReport(
-                title="No se encontraron propiedades viables" if is_spanish else "No viable properties found yet",
-                summary=(
-                    "Las restricciones actuales no produjeron una selección confiable. "
-                    "Usa la retroalimentación de abajo para ampliar la búsqueda antes de contactar vendedores."
-                    if is_spanish
-                    else "The current constraints did not produce a reliable shortlist. "
-                    "Use the feedback below to widen the search before contacting sellers."
-                ),
-                recommendations=[],
-                budget_fit=[
-                    "Ninguna propiedad pasó los filtros actuales de presupuesto y ubicación."
-                    if is_spanish
-                    else "No property passed the current budget and location filters."
-                ],
-                market_notes=[state.get("feedback", "Inventory was insufficient for the current request.")],
-                next_steps=[
-                    "Aumenta el rango de presupuesto al precio de mercado viable más cercano."
-                    if is_spanish
-                    else "Increase the budget range to the closest viable market price.",
-                    "Amplía o reduce el área objetivo según dónde exista inventario viable."
-                    if is_spanish
-                    else "Widen or narrow the target area based on where viable inventory exists.",
-                    "Relaja habitaciones, tamaño, tipo de propiedad o preferencias secundarias antes de intentarlo de nuevo."
-                    if is_spanish
-                    else "Relax room, size, property type, or secondary preference constraints before trying again.",
-                ],
-                language=state.get("language", "en"),
-            )
-        html = render_html(
-            report,
-            state["request"],
-            state["evaluation"],
-            state.get("validation", []),
-            state.get("listings", []),
-            state.get("news", []),
-        )
-        logger.info("Node seller:done title=%s", report.title)
+    def seller_node(state: AgentState) -> dict:
+        logger.info("Node seller:start properties=%s", len(state.properties or []))
+        return {} # Placeholder
+
+    def no_results_node(state: AgentState) -> dict:
+        logger.warning("Node no-results:triggered retries=%s", state.retries)
+        return {} # Placeholder
+
+    def retry_node(state: AgentState) -> dict:
+        logger.info("Node retry:triggered current_retries=%s", state.retries)
         return {
-            "report": report,
-            "html": html,
-            "trace": append_trace(state, "seller", "Generated the final HTML report."),
+            "retries": state.retries + 1,
         }
 
-    def no_results_node(state: GraphState) -> GraphState:
-        logger.warning("Node no-results:triggered retries=%s", state.get("retries", 0))
-        evaluation = EvalResult(
-            score=0.0,
-            threshold=settings.evaluation_threshold,
-            passed=False,
-            reasons=["No viable listings were found after the configured retries."],
-            required_fixes=[
-                "Relax budget, area, or property constraints.",
-                "Reduce strict must-have filters.",
-            ],
-        )
-        return {
-            "evaluation": evaluation,
-            "trace": append_trace(
-                state,
-                "no-results",
-                "Stopped retrying after the listing search still returned no viable matches.",
-            ),
-        }
-
-    def retry_node(state: GraphState) -> GraphState:
-        logger.info("Node retry:triggered current_retries=%s", state.get("retries", 0))
-        return {
-            "retries": state.get("retries", 0) + 1,
-            "trace": append_trace(
-                state,
-                "retry",
-                "Evaluator requested another pass with the current feedback.",
-            ),
-        }
-
-    def listings_route(state: GraphState) -> str:
-        if state.get("listings"):
+    def listings_route(state: AgentState) -> str:
+        if state.properties:
             logger.info("Route scraper -> after_scrape")
             return "after_scrape"
-        if state.get("retries", 0) >= settings.max_retries:
+        if state.retries >= settings.max_retries:
             logger.info("Route scraper -> no_results")
             return "no_results"
         logger.info("Route scraper -> chilling")
         return "chilling"
 
-    def news_route(state: GraphState) -> str:
-        route = "news" if state.get("run_news") else "skip_news"
+    def news_route(state: AgentState) -> str:
+        route = "news" if state.run_news else "skip_news"
         logger.info("Route after_scrape -> %s", route)
         return route
 
-    def evaluation_route(state: GraphState) -> str:
-        if state["evaluation"].passed:
-            logger.info("Route evaluator -> seller")
-            return "seller"
-        if state.get("retries", 0) >= settings.max_retries:
-            logger.info("Route evaluator -> seller (max retries reached)")
-            return "seller"
-        logger.info("Route evaluator -> retry")
-        return "retry"
+    def evaluation_route(state: AgentState) -> str:
+        # Simplified routing for now
+        logger.info("Route evaluator -> seller")
+        return "seller"
 
     graph.add_node("intake", intake_node)
     graph.add_node("coordinator", coordinator_node)
@@ -338,102 +186,3 @@ def build_graph(services: Services, settings: Settings):
     graph.add_edge("seller", END)
 
     return graph.compile()
-
-
-def render_html(
-    report: SellerReport,
-    request: UserRequest,
-    evaluation: EvalResult,
-    validation: list[str],
-    listings: list[Listing],
-    news: list[NewsInsight],
-) -> str:
-    is_spanish = report.language == "es"
-    listing_map = {item.id: item for item in listings}
-    cards = []
-    for item in report.recommendations:
-        listing = listing_map.get(item.listing_id)
-        reasons = "".join(f"<li>{reason}</li>" for reason in item.why_it_fits)
-        tradeoffs = "".join(f"<li>{tradeoff}</li>" for tradeoff in item.tradeoffs)
-        card_neighborhood = item.neighborhood
-        if listing is not None and listing.location.neighborhood:
-            card_neighborhood = listing.location.neighborhood
-        related_news = []
-        for insight in news:
-            insight_area = normalize_text(insight.neighborhood)
-            if insight_area and card_neighborhood and insight_area in normalize_text(card_neighborhood):
-                related_news.append(insight)
-            elif card_neighborhood and normalize_text(card_neighborhood) in insight_area:
-                related_news.append(insight)
-        news_html = ""
-        if related_news:
-            news_items = "".join(
-                (
-                    "<li>"
-                    f"<a class='listing-link' href='{insight.url}' target='_blank' rel='noreferrer'>{insight.title}</a>"
-                    f"<p class='news-summary'>{insight.summary}</p>"
-                    f"<p class='news-source'>{insight.source}</p>"
-                    "</li>"
-                )
-                for insight in related_news[:2]
-            )
-            news_html = (
-                f"<h4>{'Noticias de la zona' if is_spanish else 'Area news'}</h4>"
-                f"<ul class='news-list'>{news_items}</ul>"
-            )
-        link_html = ""
-        if listing is not None:
-            link_html = (
-                f"<p><a class='listing-link' href='{listing.url}' target='_blank' rel='noreferrer'>"
-                f"{'Ver publicación del inmueble' if is_spanish else 'View apartment listing'}</a></p>"
-            )
-        cards.append(
-            (
-                "<article class='card'>"
-                f"<h3>{item.title}</h3>"
-                f"<p class='price'>{item.currency} {item.price:,.0f}</p>"
-                f"<p>{item.neighborhood or ('Zona no especificada' if is_spanish else 'Area not specified')}</p>"
-                f"{link_html}"
-                f"<h4>{'Por qué encaja' if is_spanish else 'Why it fits'}</h4><ul>{reasons}</ul>"
-                f"<h4>{'Contras' if is_spanish else 'Tradeoffs'}</h4><ul>{tradeoffs}</ul>"
-                f"{news_html}"
-                "</article>"
-            )
-        )
-
-    market_notes = "".join(f"<li>{note}</li>" for note in report.market_notes)
-    budget_fit = "".join(f"<li>{item}</li>" for item in report.budget_fit)
-    next_steps = "".join(f"<li>{item}</li>" for item in report.next_steps)
-    validation_items = "".join(f"<li>{item}</li>" for item in validation)
-
-    return f"""
-    <section class="report">
-      <header class="hero">
-        <p class="eyebrow">{'Recomendación de Estatia' if is_spanish else 'Estatia recommendation'}</p>
-        <h1>{report.title}</h1>
-        <p>{report.summary}</p>
-        <div class="meta">
-          <span>{'Objetivo' if is_spanish else 'Intent'}: {request.intent.value}</span>
-          <span>{'Puntaje' if is_spanish else 'Score'}: {evaluation.score:.2f}</span>
-          <span>{'Umbral' if is_spanish else 'Threshold'}: {evaluation.threshold:.2f}</span>
-        </div>
-      </header>
-      <section class="cards">{''.join(cards)}</section>
-      <section class="panel">
-        <h2>{'Ajuste al presupuesto' if is_spanish else 'Budget fit'}</h2>
-        <ul>{budget_fit}</ul>
-      </section>
-      <section class="panel">
-        <h2>{'Notas de mercado' if is_spanish else 'Market notes'}</h2>
-        <ul>{market_notes}</ul>
-      </section>
-      <section class="panel">
-        <h2>{'Siguientes pasos' if is_spanish else 'Next steps'}</h2>
-        <ul>{next_steps}</ul>
-      </section>
-      <section class="panel">
-        <h2>{'Validación por WhatsApp' if is_spanish else 'WhatsApp validation'}</h2>
-        <ul>{validation_items}</ul>
-      </section>
-    </section>
-    """

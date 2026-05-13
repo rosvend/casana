@@ -2,73 +2,64 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class Intent(str, Enum):
     RENT = "rent"
     BUY = "buy"
-    INVEST = "invest"
 
 
 class PropertyType(str, Enum):
+    ANY = "any"
     APARTMENT = "apartment"
     HOUSE = "house"
     STUDIO = "studio"
     LOFT = "loft"
     OFFICE = "office"
     LAND = "land"
-    ANY = "any"
+
+
+class Budget(BaseModel):
+    min: float | None = None
+    max: float | None = None
+    currency: str = "COP"
+    flexible: bool = False
+
+    @field_validator("currency", mode="before")
+    @classmethod
+    def _normalize_currency(cls, value: str | None) -> str:
+        return (value or "COP").upper()
 
 
 class Location(BaseModel):
     city: str | None = None
-    country: str | None = None
     neighborhood: str | None = None
-    radius_km: int | None = None
     alternate_areas: list[str] = Field(default_factory=list)
-
-
-class Budget(BaseModel):
-    currency: str = "COP"
-    min: float | None = None
-    max: float | None = None
-    payment_type: str | None = None
-    is_flexible: bool = False
-
-    @field_validator("currency")
-    @classmethod
-    def normalize_currency(cls, value: str) -> str:
-        return value.upper()
+    radius_km: float | None = None
 
 
 class PropertyPreferences(BaseModel):
     type: PropertyType = PropertyType.ANY
     bedrooms: int | None = None
     bathrooms: int | None = None
-    area_m2: int | None = None
+    area_min_m2: float | None = None
+    area_max_m2: float | None = None
 
 
 class Constraints(BaseModel):
     must_have: list[str] = Field(default_factory=list)
     nice_to_have: list[str] = Field(default_factory=list)
-    dealbreakers: list[str] = Field(default_factory=list)
-
-
-class Timeline(BaseModel):
-    move_in_by: str | None = None
-    urgency: str | None = None
 
 
 class UserRequest(BaseModel):
+    raw_text: str
+    search_summary: str | None = None
     intent: Intent = Intent.RENT
     location: Location = Field(default_factory=Location)
     budget: Budget = Field(default_factory=Budget)
     property: PropertyPreferences = Field(default_factory=PropertyPreferences)
     constraints: Constraints = Field(default_factory=Constraints)
-    timeline: Timeline = Field(default_factory=Timeline)
-    raw_text: str
-    search_summary: str
 
 
 class ListingLocation(BaseModel):
@@ -78,26 +69,29 @@ class ListingLocation(BaseModel):
 
 
 class ListingProperty(BaseModel):
-    type: PropertyType
+    type: PropertyType = PropertyType.ANY
     bedrooms: int | None = None
     bathrooms: int | None = None
-    area_m2: int | None = None
+    area_m2: float | None = None
 
 
 class Listing(BaseModel):
     id: str
     source: str
-    url: HttpUrl
+    url: str
     title: str
     price: float
     currency: str = "COP"
     location: ListingLocation
-    property: ListingProperty
+    property: ListingProperty = Field(default_factory=ListingProperty)
     highlights: list[str] = Field(default_factory=list)
-    images: list[HttpUrl] = Field(default_factory=list)
-    posted_at: str | None = None
-    availability: str | None = "unknown"
+    images: list[str] = Field(default_factory=list)
     score: float = 0.0
+
+    @field_validator("currency", mode="before")
+    @classmethod
+    def _normalize_currency(cls, value: str | None) -> str:
+        return (value or "COP").upper()
 
 
 class NewsInsight(BaseModel):
@@ -105,7 +99,12 @@ class NewsInsight(BaseModel):
     title: str
     summary: str
     source: str
-    url: HttpUrl
+    url: str
+
+
+class TraceEvent(BaseModel):
+    node: str
+    message: str
 
 
 class EvalResult(BaseModel):
@@ -125,6 +124,11 @@ class Recommendation(BaseModel):
     why_it_fits: list[str] = Field(default_factory=list)
     tradeoffs: list[str] = Field(default_factory=list)
 
+    @field_validator("currency", mode="before")
+    @classmethod
+    def _normalize_currency(cls, value: str | None) -> str:
+        return (value or "COP").upper()
+
 
 class SellerReport(BaseModel):
     title: str
@@ -136,6 +140,47 @@ class SellerReport(BaseModel):
     language: str = "en"
 
 
-class TraceEvent(BaseModel):
-    node: str
-    message: str
+# Legacy aliases kept for compatibility with older tests and notebooks.
+class Requirement(BaseModel):
+    location: str
+    price: int
+    area: float
+    bedrooms: int
+    parking_spaces: int
+    admin_fee: int
+    bathrooms: int
+    property_type: str
+
+
+class Property(BaseModel):
+    location: str
+    price: int
+    area: float
+    bedrooms: int
+    parking_spaces: int
+    admin_fee: int
+    bathrooms: int
+    property_type: str
+    score: float
+
+
+class NewsItem(BaseModel):
+    source: str
+    text: str
+    summary: str
+
+
+class Proposal(BaseModel):
+    properties: list[Property]
+    score: float
+
+
+class AgentState(BaseModel):
+    user_text: str
+    properties: list[Property] | None = None
+    requirements: list[Requirement] | None = None
+    news_items: list[NewsItem] | None = None
+    proposals: list[Proposal] | None = None
+    run_news: bool = False
+    retries: int = 0
+    feedback: str = ""

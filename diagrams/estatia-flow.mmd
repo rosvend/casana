@@ -1,27 +1,40 @@
-flowchart TD
-  U[User Instructions] --> I[Intake / Parse Request]
-  I --> COORD["Coordinator / Synthesizer<br/>(orchestrates sub-agents)"]
-
-  %% Sub-agents orchestrated by coordinator
-  COORD --> SA["Scraping Agent<br/>(listings/properties search)"]
-  SA --> FOUND{Any viable listings found?}
-  FOUND -- No --> CCA["Chilling Instructions Agent<br/>(relax/rewrite constraints and re-try)"]
-  CCA --> COORD
-  FOUND -- Yes --> SYN["Coordinator Synthesis<br/>(candidates + rationale)"]
-
-  COORD --> NS{Neighborhood unclear?}
-  NS -- Yes --> NA["News Searcher Agent<br/>(identify areas / context)"]
-  NS -- No --> SKIPNEWS[Skip News]
-
-  COORD --> WA["WhatsApp Validator Agent<br/>(availability check)<br/>[standby initially]"]
-
-  %% Synthesis + evaluation gate
-  NA --> SYN
-  WA --> SYN
-
-  SYN --> E["Evaluator Agent<br/>(score vs threshold)"]
-  E --> PASS{Score >= threshold?}
-  PASS -- No --> COORD
-  PASS -- Yes --> SELL["Real Estate Seller Agent<br/>(generate HTML decision)"]
-
-  SELL --> OUT[Final HTML Output]
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	intake(intake)
+	coordinator(coordinator)
+	scraper(scraper)
+	after_scrape(after_scrape)
+	chilling(chilling)
+	no_results(no_results)
+	retry(retry)
+	news(news)
+	skip_news(skip_news)
+	whatsapp(whatsapp)
+	evaluator(evaluator)
+	seller(seller)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> intake;
+	after_scrape -.-> news;
+	after_scrape -.-> skip_news;
+	chilling --> coordinator;
+	coordinator --> scraper;
+	evaluator -.-> retry;
+	evaluator -.-> seller;
+	intake --> coordinator;
+	news --> whatsapp;
+	no_results --> seller;
+	retry --> coordinator;
+	scraper -.-> after_scrape;
+	scraper -.-> chilling;
+	scraper -.-> no_results;
+	skip_news --> whatsapp;
+	whatsapp --> evaluator;
+	seller --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc

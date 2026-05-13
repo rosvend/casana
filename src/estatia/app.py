@@ -14,8 +14,6 @@ from estatia.logging_utils import configure_logging
 from estatia.services import (
     OpenAIWorkflowService,
     PlaywrightListingService,
-    SeedListingService,
-    SeedNewsService,
     Services,
     StandbyWhatsAppService,
     TavilyNewsService,
@@ -90,21 +88,12 @@ def build_ui_text(language: str) -> dict[str, str]:
 def build_services() -> Services:
     logger.info("Building services with listing_mode=%s", settings.listing_mode)
     workflow = OpenAIWorkflowService(settings)
-    seed_listing = SeedListingService()
-    if settings.listing_mode == "playwright":
-        listing_service = PlaywrightListingService(
-            settings,
-            fallback=seed_listing if settings.enable_seed_fallback else None,
-        )
-    else:
-        listing_service = seed_listing
-    seed_news = SeedNewsService()
     return Services(
         intake=workflow,
         evaluation=workflow,
         seller=workflow,
-        listing=listing_service,
-        news=TavilyNewsService(settings, fallback=seed_news),
+        listing=PlaywrightListingService(settings),
+        news=TavilyNewsService(settings),
         whatsapp=StandbyWhatsAppService(),
     )
 
