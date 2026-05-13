@@ -1,3 +1,4 @@
+import concurrent.futures
 from __future__ import annotations
 
 import json
@@ -13,8 +14,7 @@ from openai import OpenAI
 from pydantic import BaseModel
 
 from estatia.config import Settings
-from estatia.listing_sources import PlaywrightListingClient
-from estatia.models import EvalResult, Listing, NewsInsight, SellerReport, UserRequest
+from estatia.models import EvalResult, Requirement, Property, NewsItem, Proposal, RequirementList
 
 logger = logging.getLogger("estatia.services")
 ModelT = TypeVar("ModelT", bound=BaseModel)
@@ -28,42 +28,44 @@ def normalize_text(value: str | None) -> str:
 
 
 class IntakeService(Protocol):
-    def parse_request(self, raw_text: str) -> UserRequest: ...
+    def parse_request(self, raw_text: str) -> list[Requirement]: ...
 
-    def chill_request(self, request: UserRequest, feedback: str) -> UserRequest: ...
+    def chill_request(self, requirement: Requirement, feedback: str) -> Requirement: ...
 
 
 class EvaluationService(Protocol):
     def evaluate(
         self,
-        request: UserRequest,
-        listings: list[Listing],
-        news: list[NewsInsight],
+        request: Requirement | None,
+        listings: list[Property],
+        news: list[NewsItem],
         threshold: float,
-    ) -> EvalResult: ...
+    ) -> EvalResult:
+        ...
 
 
 class SellerService(Protocol):
     def build_report(
         self,
-        request: UserRequest,
-        listings: list[Listing],
-        news: list[NewsInsight],
+        request: Requirement | None,
+        listings: list[Property],
+        news: list[NewsItem],
         evaluation: EvalResult,
         language: str,
-    ) -> SellerReport: ...
+    ) -> Proposal:
+        ...
 
 
 class ListingService(Protocol):
-    def search(self, request: UserRequest) -> list[Listing]: ...
+    def search(self, request: Requirement) -> list[Property]: ...
 
 
 class NewsService(Protocol):
-    def search(self, request: UserRequest, listings: list[Listing]) -> list[NewsInsight]: ...
+    def search(self, request: Requirement, listings: list[Property]) -> list[NewsItem]: ...
 
 
 class WhatsAppService(Protocol):
-    def validate(self, listings: list[Listing]) -> list[str]: ...
+    def validate(self, listings: list[Property]) -> list[str]: ...
 
 
 class OpenAIWorkflowService(IntakeService, EvaluationService, SellerService):
@@ -142,47 +144,34 @@ class OpenAIWorkflowService(IntakeService, EvaluationService, SellerService):
             raise ValueError("Model response did not contain a valid JSON object.")
         return candidate[start : end + 1]
 
-    def parse_request(self, raw_text: str) -> UserRequest:
+    def parse_request(self, raw_text: str) -> list[Requirement]:
         logger.info("%s parse_request:start", self.provider)
         parsed = self._parse_structured(
             model=self.settings.fast_model,
-            schema=UserRequest,
+            schema=RequirementList,
             system_prompt=(
-                "Extract a real-estate search request into the provided schema. "
-                "Prefer explicit values from the user. Use null when unknown. "
-                "Keep the summary short and factual."
+                "Extract real-estate search requirements into the provided schema. "
+                "Prefer explicit values from the user."
             ),
             user_content=raw_text,
         )
         logger.info("%s parse_request:done", self.provider)
-        return parsed
+        return parsed.requirements
 
-    def chill_request(self, request: UserRequest, feedback: str) -> UserRequest:
+    def chill_request(self, requirement: Requirement, feedback: str) -> Requirement:
         logger.info("%s chill_request:start", self.provider)
         parsed = self._parse_structured(
             model=self.settings.fast_model,
-            schema=UserRequest,
+            schema=Requirement,
             system_prompt=(
-                "Relax a real-estate search request so it becomes searchable. "
-                "Do not invent new priorities. Preserve the user intent. "
-                "You may relax any blocking constraint: budget, neighborhood scope, property type, "
-                "bedroom/bathroom/area targets, and strict must-have filters. "
-                "If the requested budget is too low for the target area, raise the budget ceiling "
-                "to the nearest viable market range and mark the budget as flexible. "
-                "If the area is too narrow, widen it to nearby neighborhoods. "
-                "If the area is too broad and noisy, narrow it to the most promising zone. "
-                "If constraints are too strict, move secondary preferences into nice_to_have. "
-                "Keep the same city unless the failure feedback clearly says the city itself has no matches."
+                "Relax a real-estate search requirement so it becomes searchable. "
+                "Do not invent new priorities. Preserve the user intent."
             ),
             user_content=(
-                f"Original request:\n{request.model_dump_json(indent=2)}\n\n"
+                f"Original request:\n{requirement.model_dump_json(indent=2)}\n\n"
                 f"Why it failed:\n{feedback}\n\n"
                 "Important rules:\n"
-                "- Relax the smallest number of constraints needed to make the search viable.\n"
-                "- Budget can be raised.\n"
-                "- Area can be widened or narrowed.\n"
-                "- Room count, area, property type, and must-have filters can be relaxed.\n"
-                "- Do not invent new preferences that were never implied by the user."
+                "- Relax the smallest number of constraints needed to make the search viable."
             ),
         )
         logger.info("%s chill_request:done", self.provider)
@@ -190,24 +179,24 @@ class OpenAIWorkflowService(IntakeService, EvaluationService, SellerService):
 
     def evaluate(
         self,
-        request: UserRequest,
-        listings: list[Listing],
-        news: list[NewsInsight],
+        request: Requirement | None,
+        listings: list[Property],
+        news: list[NewsItem],
         threshold: float,
     ) -> EvalResult:
         logger.info("%s evaluate:start listings=%s news=%s", self.provider, len(listings), len(news))
         listing_blob = [listing.model_dump(mode="json") for listing in listings]
         news_blob = [item.model_dump(mode="json") for item in news]
+        request_blob = request.model_dump_json(indent=2) if request else "None"
         result = self._parse_structured(
             model=self.settings.quality_model,
             schema=EvalResult,
             system_prompt=(
-                "Evaluate whether the candidate properties fit the request. "
-                "Be strict about budget, location fit, and must-have constraints."
+                "Evaluate whether the candidate properties fit the request."
             ),
             user_content=(
                 f"Threshold: {threshold}\n"
-                f"Request:\n{request.model_dump_json(indent=2)}\n\n"
+                f"Request:\n{request_blob}\n\n"
                 f"Listings:\n{listing_blob}\n\n"
                 f"News:\n{news_blob}"
             ),
@@ -217,205 +206,47 @@ class OpenAIWorkflowService(IntakeService, EvaluationService, SellerService):
 
     def build_report(
         self,
-        request: UserRequest,
-        listings: list[Listing],
-        news: list[NewsInsight],
+        request: Requirement | None,
+        listings: list[Property],
+        news: list[NewsItem],
         evaluation: EvalResult,
         language: str,
-    ) -> SellerReport:
+    ) -> Proposal:
         logger.info("%s build_report:start listings=%s", self.provider, len(listings))
         language_name = "Spanish" if language == "es" else "English"
+        request_blob = request.model_dump_json(indent=2) if request else "None"
         parsed = self._parse_structured(
             model=self.settings.quality_model,
-            schema=SellerReport,
+            schema=Proposal,
             system_prompt=(
-                "Prepare a concise sales report for shortlisted properties. "
+                "Prepare a concise sales proposal for shortlisted properties. "
                 "Be specific, practical, and grounded in the provided data. "
                 f"Write the report in {language_name}."
             ),
             user_content=(
-                f"Request:\n{request.model_dump_json(indent=2)}\n\n"
+                f"Request:\n{request_blob}\n\n"
                 f"Listings:\n{[item.model_dump(mode='json') for item in listings]}\n\n"
                 f"News:\n{[item.model_dump(mode='json') for item in news]}\n\n"
                 f"Evaluation:\n{evaluation.model_dump_json(indent=2)}"
             ),
         )
         logger.info("%s build_report:done", self.provider)
-        return parsed.model_copy(update={"language": language})
+        return parsed
 
 
-class PlaywrightListingService(ListingService):
-    def __init__(self, settings: Settings, fallback: ListingService | None = None) -> None:
-        self.client = PlaywrightListingClient(settings)
-        self.fallback = fallback
-
-    def search(self, request: UserRequest) -> list[Listing]:
-        logger.info("Playwright listing search:start")
-        listings = self.client.search(request)
-        if listings:
-            logger.info("Playwright listing search:done listings=%s", len(listings))
-            return listings
-        if self.fallback is not None:
-            logger.warning("Playwright listing search returned no listings, using configured fallback service")
-            return self.fallback.search(request)
-        logger.warning("Playwright listing search returned no listings")
+class DummyListingService(ListingService):
+    def search(self, request: Requirement) -> list[Property]:
         return []
 
 
-CITY_NEIGHBORHOODS: dict[str, list[str]] = {
-    "bogota": ["Chico Norte", "Cedritos", "Teusaquillo", "Rosales", "Chapinero", "Usaquen"],
-    "medellin": ["Laureles", "El Poblado", "Envigado", "Sabaneta", "Belen", "Los Colores"],
-    "cali": ["Ciudad Jardin", "Granada", "San Fernando", "El Ingenio", "Pance"],
-}
-
-
-class TavilyNewsService(NewsService):
-    def __init__(self, settings: Settings, fallback: NewsService | None = None) -> None:
-        self.settings = settings
-        self.api_key = settings.tavily_api_key
-        self.fallback = fallback
-
-    def search(self, request: UserRequest, listings: list[Listing]) -> list[NewsInsight]:
-        if not self.api_key:
-            logger.warning("Tavily news search skipped because TAVILY_API_KEY is not configured")
-            return self._fallback(request, listings)
-
-        neighborhoods = self._candidate_neighborhoods(request, listings)
-        query = self._build_query(request, neighborhoods)
-        payload = {
-            "api_key": self.api_key,
-            "query": query,
-            "topic": "news",
-            "search_depth": "basic",
-            "time_range": "month",
-            "max_results": self.settings.news_results_limit,
-            "include_answer": False,
-            "include_raw_content": False,
-        }
-        logger.info(
-            "Tavily news search:start city=%s neighborhoods=%s",
-            request.location.city,
-            neighborhoods,
-        )
-        try:
-            response = self._post_search(payload)
-        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
-            logger.warning("Tavily news search failed: %s", exc)
-            return self._fallback(request, listings)
-
-        insights = self._build_insights(response, neighborhoods, request)
-        logger.info("Tavily news search:done insights=%s", len(insights))
-        if insights:
-            return insights
-        return self._fallback(request, listings)
-
-    def _post_search(self, payload: dict[str, object]) -> dict[str, object]:
-        body = json.dumps(payload).encode("utf-8")
-        request = UrlRequest(
-            "https://api.tavily.com/search",
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urlopen(request, timeout=20) as response:
-            return json.loads(response.read().decode("utf-8"))
-
-    def _candidate_neighborhoods(
-        self,
-        request: UserRequest,
-        listings: list[Listing],
-    ) -> list[str]:
-        if request.location.neighborhood:
-            return [request.location.neighborhood]
-
-        candidates: list[str] = []
-        for area in request.location.alternate_areas:
-            if area and area not in candidates:
-                candidates.append(area)
-
-        for listing in listings:
-            neighborhood = listing.location.neighborhood
-            if neighborhood and neighborhood not in candidates:
-                candidates.append(neighborhood)
-
-        city_key = normalize_text(request.location.city)
-        for area in CITY_NEIGHBORHOODS.get(city_key, []):
-            if area not in candidates:
-                candidates.append(area)
-
-        return candidates[:6]
-
-    def _build_query(self, request: UserRequest, neighborhoods: list[str]) -> str:
-        city = request.location.city or "the city"
-        intent = "rental" if request.intent.value == "rent" else "property"
-        focus = ", ".join(neighborhoods[:4]) if neighborhoods else city
-        return (
-            f"{city} Colombia neighborhood news {focus} "
-            f"safety transport development walkability demand {intent}"
-        )
-
-    def _build_insights(
-        self,
-        response: dict[str, object],
-        neighborhoods: list[str],
-        request: UserRequest,
-    ) -> list[NewsInsight]:
-        results = response.get("results", [])
-        if not isinstance(results, list):
-            return []
-
-        insights: list[NewsInsight] = []
-        for item in results:
-            if not isinstance(item, dict):
-                continue
-            title = str(item.get("title") or "").strip()
-            url = str(item.get("url") or "").strip()
-            summary = str(item.get("content") or item.get("snippet") or "").strip()
-            source = str(item.get("source") or item.get("domain") or "Tavily").strip()
-            if not title or not url or not summary:
-                continue
-            neighborhood = self._detect_neighborhood(title, summary, neighborhoods, request)
-            if not neighborhood:
-                continue
-            try:
-                insights.append(
-                    NewsInsight(
-                        neighborhood=neighborhood,
-                        title=title,
-                        summary=summary[:420],
-                        source=source,
-                        url=url,
-                    )
-                )
-            except Exception:
-                continue
-        return insights[: self.settings.news_results_limit]
-
-    def _detect_neighborhood(
-        self,
-        title: str,
-        summary: str,
-        neighborhoods: list[str],
-        request: UserRequest,
-    ) -> str | None:
-        haystack = normalize_text(f"{title} {summary}")
-        for neighborhood in neighborhoods:
-            if normalize_text(neighborhood) and normalize_text(neighborhood) in haystack:
-                return neighborhood
-        if request.location.neighborhood:
-            return request.location.neighborhood
-        return request.location.city
-
-    def _fallback(self, request: UserRequest, listings: list[Listing]) -> list[NewsInsight]:
-        if self.fallback is None:
-            return []
-        logger.info("Tavily news search:fallback")
-        return self.fallback.search(request, listings)
+class DummyNewsService(NewsService):
+    def search(self, request: Requirement, listings: list[Property]) -> list[NewsItem]:
+        return []
 
 
 class StandbyWhatsAppService(WhatsAppService):
-    def validate(self, listings: list[Listing]) -> list[str]:
-        return [f"{listing.id}: standby validation disabled" for listing in listings]
+    def validate(self, listings: list[Property]) -> list[str]:
+        return [f"{listing.location}: standby validation disabled" for listing in listings]
 
 
 @dataclass(slots=True)
@@ -426,3 +257,114 @@ class Services:
     listing: ListingService
     news: NewsService
     whatsapp: WhatsAppService
+class TavilyNewsService(NewsService):
+    def __init__(self, settings: Settings, fallback: NewsService | None = None) -> None:
+        self.settings = settings
+        self.api_key = settings.tavily_api_key
+        self.fallback = fallback
+        self.topics = [
+            "movilidad transporte publico trafico",
+            "seguridad crimen policia",
+            "comercializacion comercio tiendas",
+            "vida nocturna bares restaurantes",
+            "riesgos ambientales inundaciones clima"
+        ]
+
+    def search(self, request: Requirement, listings: list[Property]) -> list[NewsItem]:
+        if not self.api_key:
+            logger.warning("Tavily skipped (no API key). Using fallback.")
+            return self._fallback(request, listings)
+
+        locations = self._candidate_locations(request, listings)
+        focus = ", ".join(locations) if locations else "Colombia"
+        
+        queries = [f"{focus} {topic}" for topic in self.topics]
+        
+        logger.info("Tavily composite search:start locations=%s topics=%s", locations, len(queries))
+        
+        all_news_items = []
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(queries)) as executor:
+            future_to_query = {executor.submit(self._fetch_single_query, query): query for query in queries}
+            for future in concurrent.futures.as_completed(future_to_query):
+                query = future_to_query[future]
+                try:
+                    items = future.result()
+                    all_news_items.extend(items)
+                except Exception as exc:
+                    logger.warning("Tavily sub-query '%s' failed: %s", query, exc)
+                    
+        logger.info("Tavily composite search:done total_insights=%s", len(all_news_items))
+        
+        # Deduplicate by title to avoid noise
+        seen_titles = set()
+        unique_items = []
+        for item in all_news_items:
+            if item.text not in seen_titles:
+                unique_items.append(item)
+                seen_titles.add(item.text)
+                
+        if unique_items:
+            return unique_items[:self.settings.news_results_limit * len(self.topics)]
+            
+        return self._fallback(request, listings)
+
+    def _fetch_single_query(self, query: str) -> list[NewsItem]:
+        payload = {
+            "api_key": self.api_key,
+            "query": query,
+            "topic": "news",
+            "search_depth": "basic",
+            "time_range": "month",
+            "max_results": max(1, self.settings.news_results_limit),
+            "include_answer": False,
+        }
+        response = self._post_search(payload)
+        return self._build_insights(response)
+
+    def _post_search(self, payload: dict) -> dict:
+        body = json.dumps(payload).encode("utf-8")
+        request = UrlRequest(
+            "https://api.tavily.com/search",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(request, timeout=20) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def _candidate_locations(self, request: Requirement, listings: list[Property]) -> list[str]:
+        candidates = []
+        if request.location and request.location not in candidates:
+            candidates.append(request.location)
+            
+        for listing in listings:
+            if listing.location and listing.location not in candidates:
+                candidates.append(listing.location)
+                
+        return candidates[:3] 
+
+    def _build_insights(self, response: dict) -> list[NewsItem]:
+        results = response.get("results", [])
+        news_items = []
+        for item in results:
+            title = str(item.get("title") or "").strip()
+            summary = str(item.get("content") or item.get("snippet") or "").strip()
+            source = str(item.get("source") or item.get("domain") or "Tavily").strip()
+            
+            if not title or not summary:
+                continue
+                
+            news_items.append(
+                NewsItem(
+                    source=source,
+                    text=title,
+                    summary=summary[:420] 
+                )
+            )
+        return news_items
+
+    def _fallback(self, request: Requirement, listings: list[Property]) -> list[NewsItem]:
+        if self.fallback is None:
+            return []
+        return self.fallback.search(request, listings)

@@ -27,7 +27,6 @@ def build_graph(services: Services, settings: Settings):
         logger.info("Node coordinator:start")
         run_news = False
         if state.requirements:
-            # Example logic: if the location lacks specific details or is broad
             location = state.requirements[0].location.lower()
             if "bogota" in location or "medellin" in location:
                 run_news = True
@@ -86,7 +85,7 @@ def build_graph(services: Services, settings: Settings):
         logger.info("Node whatsapp:start")
         validation = services.whatsapp.validate(state.properties or [])
         logger.info("Node whatsapp:done validations=%s", len(validation))
-        return {} # Placeholder for validation state if added to AgentState later
+        return {} 
 
     def evaluator_node(state: AgentState) -> dict:
         logger.info("Node evaluator:start")
@@ -99,16 +98,32 @@ def build_graph(services: Services, settings: Settings):
         logger.info("Node evaluator:done passed=%s", evaluation.passed)
         return {
             "feedback": "; ".join(evaluation.required_fixes) if not evaluation.passed else "",
-            # Needs evaluation state added to AgentState to store full result
+            "evaluation": evaluation,
         }
 
     def seller_node(state: AgentState) -> dict:
         logger.info("Node seller:start properties=%s", len(state.properties or []))
-        return {} # Placeholder
+        if not state.evaluation:
+            return {"html": "<p>Error: No evaluation provided.</p>"}
+            
+        proposal = services.seller.build_report(
+            request=state.requirements[0] if state.requirements else None,
+            listings=state.properties or [],
+            news=state.news_items or [],
+            evaluation=state.evaluation,
+            language="es"
+        )
+        
+        html = render_html(proposal, state.requirements[0] if state.requirements else None, state.news_items or [])
+        logger.info("Node seller:done html_len=%s", len(html))
+        return {
+            "proposals": [proposal],
+            "html": html,
+        }
 
     def no_results_node(state: AgentState) -> dict:
         logger.warning("Node no-results:triggered retries=%s", state.retries)
-        return {} # Placeholder
+        return {} 
 
     def retry_node(state: AgentState) -> dict:
         logger.info("Node retry:triggered current_retries=%s", state.retries)
@@ -132,9 +147,14 @@ def build_graph(services: Services, settings: Settings):
         return route
 
     def evaluation_route(state: AgentState) -> str:
-        # Simplified routing for now
-        logger.info("Route evaluator -> seller")
-        return "seller"
+        if state.evaluation and state.evaluation.passed:
+            logger.info("Route evaluator -> seller")
+            return "seller"
+        if state.retries >= settings.max_retries:
+            logger.info("Route evaluator -> seller (max retries reached)")
+            return "seller"
+        logger.info("Route evaluator -> retry")
+        return "retry"
 
     graph.add_node("intake", intake_node)
     graph.add_node("coordinator", coordinator_node)
@@ -186,3 +206,46 @@ def build_graph(services: Services, settings: Settings):
     graph.add_edge("seller", END)
 
     return graph.compile()
+
+def render_html(proposal: Proposal, requirement: Requirement | None, news: list[NewsItem]) -> str:
+    cards = []
+    for prop in proposal.properties:
+        cards.append(
+            f"<article class='card'>"
+            f"<h3>{str(prop.property_type).capitalize()} en {prop.location}</h3>"
+            f"<p class='price'>${prop.price:,.0f}</p>"
+            f"<ul>"
+            f"<li>Area: {prop.area} m2</li>"
+            f"<li>Habitaciones: {prop.bedrooms}</li>"
+            f"<li>Baños: {prop.bathrooms}</li>"
+            f"<li>Parqueaderos: {prop.parking_spaces}</li>"
+            f"</ul>"
+            f"</article>"
+        )
+        
+    news_html = ""
+    if news:
+        news_items = "".join(
+            f"<li><strong>{item.source}:</strong> {item.text} <br><small>{item.summary}</small></li>"
+            for item in news[:5]
+        )
+        news_html = f"<section class='panel'><h2>Noticias Relevantes</h2><ul>{news_items}</ul></section>"
+        
+    req_html = ""
+    if requirement:
+        req_html = f"<p>Buscando en: {requirement.location} (Presupuesto: ${requirement.price:,.0f})</p>"
+
+    return f"""
+    <section class="report">
+      <header class="hero">
+        <p class="eyebrow">Propuesta de Estatia</p>
+        <h1>Recomendaciones de Propiedades</h1>
+        {req_html}
+        <div class="meta">
+          <span>Puntaje de Propuesta: {proposal.score:.2f}</span>
+        </div>
+      </header>
+      <section class="cards">{''.join(cards)}</section>
+      {news_html}
+    </section>
+    """

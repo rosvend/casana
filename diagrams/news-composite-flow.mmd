@@ -1,0 +1,35 @@
+flowchart TD
+    %% Main LangGraph Flow
+    Intake[Intake Node] --> Coord[Coordinator Node]
+    Coord --> Scraper[Scraper Node]
+    Scraper --> News{News Node Triggered?}
+    News -- No --> Eval[Evaluator Node]
+    
+    %% Inside the Composite News Node
+    News -- Yes --> CompositeAgent[News Node: Composite Agent]
+    
+    subgraph CompositeAgent [News Node Internal Concurrency]
+        direction TB
+        QueryGen[Generate Topic Queries]
+        
+        QueryGen --> Q1[Query: Movilidad / Transporte]
+        QueryGen --> Q2[Query: Seguridad / Crimen]
+        QueryGen --> Q3[Query: Comercialización]
+        QueryGen --> Q4[Query: Vida Nocturna]
+        QueryGen --> Q5[Query: Riesgos Ambientales]
+        
+        Q1 --> Tavily1[Tavily API]
+        Q2 --> Tavily2[Tavily API]
+        Q3 --> Tavily3[Tavily API]
+        Q4 --> Tavily4[Tavily API]
+        Q5 --> Tavily5[Tavily API]
+        
+        Tavily1 --> Agg[Aggregator & Deduplicator]
+        Tavily2 --> Agg
+        Tavily3 --> Agg
+        Tavily4 --> Agg
+        Tavily5 --> Agg
+    end
+    
+    Agg --> Eval
+    Eval --> Seller[Seller Node: Render HTML]

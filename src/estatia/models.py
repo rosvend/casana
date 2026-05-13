@@ -176,11 +176,25 @@ class Proposal(BaseModel):
 
 
 class AgentState(BaseModel):
-    user_text: str
+    raw_text: str | None = None
+    user_text: str | None = None
     properties: list[Property] | None = None
     requirements: list[Requirement] | None = None
     news_items: list[NewsItem] | None = None
     proposals: list[Proposal] | None = None
+    evaluation: EvalResult | None = None
+    html: str = ""
     run_news: bool = False
     retries: int = 0
     feedback: str = ""
+from pydantic import BaseModel
+class EvalResult(BaseModel):
+    score: float
+    threshold: float
+    passed: bool
+    reasons: list[str] = []
+    required_fixes: list[str] = []
+from pydantic import BaseModel
+from estatia.models import Requirement
+class RequirementList(BaseModel):
+    requirements: list[Requirement]

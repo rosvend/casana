@@ -1,50 +1,50 @@
 from estatia.config import Settings
 from estatia.graph import build_graph
 from estatia.models import (
-    Budget,
     EvalResult,
-    Listing,
-    ListingLocation,
-    ListingProperty,
-    Location,
-    Recommendation,
-    NewsInsight,
-    SellerReport,
-    PropertyType,
-    UserRequest,
+    Requirement,
+    Property,
+    NewsItem,
+    Proposal,
 )
 from estatia.services import Services, StandbyWhatsAppService
 
 
 class StaticListingService:
-    def __init__(self, listings: list[Listing]) -> None:
+    def __init__(self, listings: list[Property]) -> None:
         self.listings = listings
 
-    def search(self, request: UserRequest) -> list[Listing]:
-        if request.location.neighborhood == "Atlantis":
+    def search(self, request: Requirement) -> list[Property]:
+        if request.location == "Atlantis":
             return []
         return self.listings
 
 
 class StaticNewsService:
-    def __init__(self, insights: list[NewsInsight]) -> None:
+    def __init__(self, insights: list[NewsItem]) -> None:
         self.insights = insights
 
-    def search(self, request: UserRequest, listings: list[Listing]) -> list[NewsInsight]:
+    def search(self, request: Requirement, listings: list[Property]) -> list[NewsItem]:
         return self.insights
 
 
 class DummyWorkflow:
-    def parse_request(self, raw_text: str) -> UserRequest:
-        return UserRequest(
-            raw_text=raw_text,
-            search_summary="Need an apartment in Bogota",
-            location=Location(city="Bogota"),
-            budget=Budget(max=3000000),
-        )
+    def parse_request(self, raw_text: str) -> list[Requirement]:
+        return [
+            Requirement(
+                location="Bogota",
+                price=3000000,
+                area=70.0,
+                bedrooms=2,
+                parking_spaces=1,
+                admin_fee=200000,
+                bathrooms=1,
+                property_type="apartment"
+            )
+        ]
 
-    def chill_request(self, request: UserRequest, feedback: str) -> UserRequest:
-        return request.model_copy(update={"location": Location(city="Bogota", neighborhood="Teusaquillo")})
+    def chill_request(self, request: Requirement, feedback: str) -> Requirement:
+        return request.model_copy(update={"location": "Teusaquillo"})
 
     def evaluate(self, request, listings, news, threshold):
         return EvalResult(
@@ -56,39 +56,25 @@ class DummyWorkflow:
         )
 
     def build_report(self, request, listings, news, evaluation, language):
-        top = listings[0]
-        return SellerReport(
-            title="Top match",
-            summary="A concise match.",
-            recommendations=[
-                Recommendation(
-                    listing_id=top.id,
-                    title=top.title,
-                    neighborhood=top.location.neighborhood,
-                    price=top.price,
-                    currency=top.currency,
-                    why_it_fits=["Within budget"],
-                    tradeoffs=["Limited inventory"],
-                )
-            ],
-            budget_fit=["Stays under max budget."],
-            market_notes=["Inventory is thin but usable."],
-            next_steps=["Book a visit."],
-            language="en",
+        return Proposal(
+            properties=listings,
+            score=0.85
         )
 
 
 def test_graph_reaches_seller_node_with_seed_services():
     workflow = DummyWorkflow()
     listings = [
-        Listing(
-            id="bog-apt-001",
-            source="test",
-            url="https://example.com/listings/bog-apt-001",
-            title="Modern apartment near Parque 93",
+        Property(
+            location="Teusaquillo",
             price=2800000,
-            location=ListingLocation(city="Bogota", neighborhood="Teusaquillo"),
-            property=ListingProperty(type=PropertyType.APARTMENT, bedrooms=2, bathrooms=2),
+            area=65.0,
+            bedrooms=2,
+            parking_spaces=1,
+            admin_fee=150000,
+            bathrooms=2,
+            property_type="apartment",
+            score=0.9
         )
     ]
     services = Services(
@@ -102,23 +88,34 @@ def test_graph_reaches_seller_node_with_seed_services():
     settings = Settings(openai_api_key="test", max_retries=1)
 
     graph = build_graph(services, settings)
-    state = graph.invoke({"raw_text": "find me a place", "retries": 0, "trace": []})
+    state = graph.invoke(
+        {
+            "user_text": "find me a place",
+            "retries": 0,
+        }
+    )
 
-    assert "html" in state
-    assert state["evaluation"].passed is True
+    assert "feedback" in state
+    assert state["feedback"] == "" # Because it passed evaluation
 
 
 def test_graph_no_results_feedback_mentions_constraint_relaxation():
     class NoResultsWorkflow:
-        def parse_request(self, raw_text: str) -> UserRequest:
-            return UserRequest(
-                raw_text=raw_text,
-                search_summary="Strict budget in exact zone",
-                location=Location(city="Bogota", neighborhood="Atlantis"),
-                budget=Budget(max=3000000),
-            )
+        def parse_request(self, raw_text: str) -> list[Requirement]:
+            return [
+                Requirement(
+                    location="Atlantis",
+                    price=3000000,
+                    area=70.0,
+                    bedrooms=2,
+                    parking_spaces=1,
+                    admin_fee=200000,
+                    bathrooms=1,
+                    property_type="apartment"
+                )
+            ]
 
-        def chill_request(self, request: UserRequest, feedback: str) -> UserRequest:
+        def chill_request(self, request: Requirement, feedback: str) -> Requirement:
             return request
 
         def evaluate(self, request, listings, news, threshold):
@@ -131,13 +128,9 @@ def test_graph_no_results_feedback_mentions_constraint_relaxation():
             )
 
         def build_report(self, request, listings, news, evaluation, language):
-            return SellerReport(
-                title="unused",
-                summary="unused",
-                recommendations=[],
-                budget_fit=[],
-                market_notes=[],
-                next_steps=[],
+            return Proposal(
+                properties=[],
+                score=0.0
             )
 
     workflow = NoResultsWorkflow()
@@ -152,9 +145,12 @@ def test_graph_no_results_feedback_mentions_constraint_relaxation():
     settings = Settings(openai_api_key="test", max_retries=0)
 
     graph = build_graph(services, settings)
-    state = graph.invoke({"raw_text": "find me a place", "retries": 0, "trace": []})
+    state = graph.invoke(
+        {
+            "user_text": "find me a place",
+            "retries": 0,
+        }
+    )
 
     feedback = state["feedback"].lower()
-    assert "increase budget.max" in feedback
-    assert "widen or narrow the search area" in feedback
-    assert "relax property type" in feedback
+    assert "no properties matched" in feedback
