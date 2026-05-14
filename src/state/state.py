@@ -36,7 +36,7 @@ class PropertyFinderState(TypedDict, total=False):
     dict.
     """
 
-    # ── 1. User input layer ──────────────────────────────────────────────
+    # 1. User input layer 
     user_query: str
     """The raw user request. Written by the graph entrypoint; read by
     requirements_agent."""
@@ -51,7 +51,7 @@ class PropertyFinderState(TypedDict, total=False):
     by requirements_agent when `requirements_complete` is False; consumed by
     the user-facing layer (out of graph scope) and cleared on the next pass."""
 
-    # ── 2. Structured requirements ───────────────────────────────────────
+    # 2. Structured requirements
     requirements: StructuredRequirements | None
     """Parsed brief produced by requirements_agent; the contract every
     downstream agent reads to know what to look for / score against /
@@ -61,12 +61,12 @@ class PropertyFinderState(TypedDict, total=False):
     """Gates `requirements_router` in graph.py. False → loop back to
     requirements_agent for more clarification; True → proceed to router_agent."""
 
-    # ── 3. Routing decisions ─────────────────────────────────────────────
+    # 3. Routing decisions 
     active_branches: list[str]
     """Which fan-out branches router_agent activated this iteration (e.g.
     ['properties_agent', 'news_agent']). Replaced on each router pass."""
 
-    # ── 4. Parallel fetch outputs ────────────────────────────────────────
+    # 4. Parallel fetch outputs 
     raw_listings: list[Listing]
     """Listings scraped by properties_agent. Replaced (not appended) on each
     softening retry so stale results don't accumulate."""
@@ -79,18 +79,18 @@ class PropertyFinderState(TypedDict, total=False):
     """Listings after whatsapp_agent has attempted availability confirmation.
     Replaced on each retry."""
 
-    # ── 5. Synthesized candidates ────────────────────────────────────────
+    # 5. Synthesized candidates 
     candidates: list[Candidate]
     """Merged, deduplicated, news-enriched candidates. Written by the
     synthesizer; read by evaluator_agent and `done_node`. Replaced each
     synthesis pass."""
 
-    # ── 6. Evaluation result ─────────────────────────────────────────────
+    # 6. Evaluation result 
     evaluation: EvaluationResult | None
     """Latest evaluator verdict. `evaluation_router` in graph.py reads
     `.passes` to decide done / best_effort / soften."""
 
-    # ── 7. Softening loop ────────────────────────────────────────────────
+    # 7. Softening loop
     softening_attempts: int
     """Counter compared against `max_softening_attempts` (currently 3) by
     `evaluation_router`. Softener_agent is responsible for incrementing it;
@@ -102,7 +102,7 @@ class PropertyFinderState(TypedDict, total=False):
     instead of overwriting. The softener reads this in full before each new
     decision so it doesn't repeat unproductive moves."""
 
-    # ── 8. Final output ──────────────────────────────────────────────────
+    # 8. Final output 
     final_results: list[Candidate]
     """Result set returned to the user. Written by `done_node` (clean match)
     or `best_effort_node` (after retries exhausted)."""
