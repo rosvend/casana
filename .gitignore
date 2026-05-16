@@ -8,6 +8,11 @@ __pycache__/
 
 # Claude
 CLAUDE.md
+.claude/
+
+# Playwright CLI / browser artifacts
+.playwright-cli/
+.playwright/
 
 # Distribution / packaging
 .Python
