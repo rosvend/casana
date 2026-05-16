@@ -36,6 +36,34 @@ class Listing(BaseModel):
         default_factory=list,
         description="Contact numbers extracted from the listing; consumed by whatsapp_agent.",
     )
+    property_type: str | None = Field(
+        default=None,
+        description="Property kind in canonical English, e.g. 'apartment', 'house'.",
+    )
+    transaction_type: str | None = Field(
+        default=None,
+        description="Transaction kind in canonical English, e.g. 'rent', 'sale'.",
+    )
+    estrato: int | None = Field(
+        default=None,
+        description="Colombian socio-economic stratum (1-6) when published by the portal.",
+    )
+    parking_lots: int | None = Field(
+        default=None,
+        description="Parking spaces included with the unit.",
+    )
+    contact_links: list[str] = Field(
+        default_factory=list,
+        description="Direct contact URLs found on the listing page (api.whatsapp.com / wa.me).",
+    )
+    coordinates: dict[str, float] | None = Field(
+        default=None,
+        description="Map coordinates as {'lat': float, 'lon': float} when extractable.",
+    )
+    description: str | None = Field(
+        default=None,
+        description="Full free-text description scraped from the detail page.",
+    )
     raw_payload: dict[str, Any] = Field(
         default_factory=dict,
         description="Source-specific extra fields preserved verbatim for traceability.",
