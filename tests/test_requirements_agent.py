@@ -1,0 +1,149 @@
+"""Standalone smoke test for ``requirements_node`` (vertical slice).
+
+Drives the front-of-graph node through two real LLM calls — an incomplete
+request that should trigger a Spanish clarification, and a rich request that
+should extract English snake_case constraints with security-weighted
+priorities. Unlike the properties test, this is fast and cheap; it only needs
+a valid ``OPENAI_API_KEY`` in ``.env``.
+
+    uv run python -m tests.test_requirements_agent
+
+It verifies the node: gates the clarification loop via ``requirements_complete``,
+maps Spanish constraints to the canonical English schema, and emits
+``priority_weights`` that sum to 1.0 and reflect the user's emphasis.
+"""
+
+from __future__ import annotations
+
+import sys
+
+from src.agents.requirements_agent import requirements_node
+from src.state import PropertyFinderState, StructuredRequirements
+
+
+def _check(label: str, ok: bool, detail: str = "") -> bool:
+    print(f"  [{'PASS' if ok else 'FAIL'}] {label}" + (f" — {detail}" if detail else ""))
+    return ok
+
+
+def _find_constraint(requirements: StructuredRequirements, field: str):
+    """Return the first constraint with the given field, or None."""
+    return next((c for c in requirements.constraints if c.field == field), None)
+
+
+def test_incomplete_request() -> bool:
+    """A vague request must not be complete and must ask a Spanish question."""
+    state: PropertyFinderState = {"user_query": "Hola, busco un lugar para vivir."}
+    result = requirements_node(state)
+
+    question = result.get("clarification_question")
+    print(f"  clarification_question: {question!r}")
+
+    passed = _check(
+        "requirements_complete is False",
+        result.get("requirements_complete") is False,
+        f"got {result.get('requirements_complete')!r}",
+    )
+    passed &= _check(
+        "clarification_question is a non-empty string",
+        isinstance(question, str) and bool(question.strip()),
+    )
+    passed &= _check(
+        "requirements is None while incomplete",
+        result.get("requirements") is None,
+    )
+    passed &= _check(
+        "user turn appended to chat_history",
+        any(t.get("role") == "user" for t in result.get("chat_history", [])),
+    )
+    return passed
+
+
+def test_complete_request_with_weights() -> bool:
+    """A rich request must extract English constraints and security-led weights."""
+    state: PropertyFinderState = {
+        "user_query": (
+            "Busco un apto en Laureles, mínimo 2 habitaciones, máximo 3 millones "
+            "de pesos. Para mí lo más importante es que el barrio sea muy seguro "
+            "para mi familia, el precio pasa a segundo plano."
+        )
+    }
+    result = requirements_node(state)
+
+    passed = _check(
+        "requirements_complete is True",
+        result.get("requirements_complete") is True,
+        f"got {result.get('requirements_complete')!r}",
+    )
+
+    requirements = result.get("requirements")
+    if not isinstance(requirements, StructuredRequirements):
+        _check("requirements is a StructuredRequirements", False,
+               f"got {type(requirements).__name__}")
+        return False
+
+    print(f"  summary: {requirements.summary!r}")
+    for c in requirements.constraints:
+        print(f"  constraint: {c.model_dump(exclude_none=True)}")
+    print(f"  priority_weights: {requirements.priority_weights}")
+
+    passed &= _check("constraints were extracted", len(requirements.constraints) > 0)
+
+    # Constraint fields must be the canonical snake_case English names.
+    allowed = {
+        "location", "property_type", "transaction_type", "price", "bedrooms",
+        "bathrooms", "parking_lots", "estrato", "area_m2", "zone",
+    }
+    bad = [c.field for c in requirements.constraints if c.field not in allowed]
+    passed &= _check("constraint fields are English snake_case", not bad,
+                     f"unexpected fields: {bad}" if bad else "")
+
+    # Laureles should land in a location or zone constraint.
+    place = _find_constraint(requirements, "location") or _find_constraint(
+        requirements, "zone")
+    passed &= _check(
+        "location/zone constraint mentions Laureles",
+        place is not None and "laureles" in str(place.exact_value).lower(),
+        f"got {place.model_dump(exclude_none=True) if place else None}",
+    )
+
+    bedrooms = _find_constraint(requirements, "bedrooms")
+    passed &= _check(
+        "bedrooms constraint has min_value 2",
+        bedrooms is not None and bedrooms.min_value == 2,
+        f"got {bedrooms.model_dump(exclude_none=True) if bedrooms else None}",
+    )
+
+    price = _find_constraint(requirements, "price")
+    passed &= _check(
+        "price constraint has max_value 3_000_000",
+        price is not None and price.max_value == 3_000_000,
+        f"got {price.model_dump(exclude_none=True) if price else None}",
+    )
+
+    # priority_weights: must sum to 1.0 and favour security over price.
+    weights = requirements.priority_weights
+    total = sum(weights.values())
+    passed &= _check("priority_weights sum to 1.0", abs(total - 1.0) < 1e-6,
+                     f"sum={total}")
+    passed &= _check(
+        "security weighted above price",
+        weights.get("security", 0.0) > weights.get("price", 0.0),
+        f"security={weights.get('security')} price={weights.get('price')}",
+    )
+    return passed
+
+
+def main() -> int:
+    print("=== requirements_node ===")
+    ok = True
+    print("\ntest_incomplete_request:")
+    ok &= test_incomplete_request()
+    print("\ntest_complete_request_with_weights:")
+    ok &= test_complete_request_with_weights()
+    print(f"\n{'ALL TESTS PASSED' if ok else 'SOME TESTS FAILED'}")
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

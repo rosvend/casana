@@ -535,6 +535,7 @@ dependencies = [
     { name = "langgraph-cli", extra = ["inmem"] },
     { name = "playwright" },
     { name = "pydantic" },
+    { name = "python-dotenv" },
     { name = "scrapling", extra = ["ai", "all"] },
     { name = "searxng" },
 ]
@@ -548,6 +549,7 @@ requires-dist = [
     { name = "langgraph-cli", extras = ["inmem"], specifier = ">=0.4.25" },
     { name = "playwright", specifier = ">=1.59.0" },
     { name = "pydantic", specifier = ">=2.7" },
+    { name = "python-dotenv", specifier = ">=1.0" },
     { name = "scrapling", extras = ["ai", "all"], specifier = ">=0.4.8" },
     { name = "searxng", specifier = ">=0.0.0.dev0" },
 ]

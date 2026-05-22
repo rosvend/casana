@@ -9,9 +9,8 @@ from src.agents import (
     whatsapp_agent,
     synthesizer_agent,
     evaluator_agent,
-    softener_agent,
-    synthesizer_agent,
-)
+    softener_agent
+    )
 
 """Roles and responsibilities of each agent:
 
