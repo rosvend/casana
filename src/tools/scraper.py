@@ -19,6 +19,20 @@ Run the file directly to exercise the full pipeline against live sites:
 
 from __future__ import annotations
 
+"""
+TODO: Restructure script into the following modular architecture:
+src/
+└── tools/
+    └── scraper/
+        ├── __init__.py           # The public API. Exposes the two @tool functions.
+        ├── core.py               # Shared utilities: _fetch_page, regex helpers, _extract_coordinates.
+        └── adapters/             
+            ├── __init__.py       # Imports all adapters and exposes the list of active ones.
+            ├── base.py           # Optional: Defines an abstract base class/protocol so every adapter has the same signature.
+            ├── fincaraiz.py      # Strictly Finca Raiz parsing logic.
+            └── metrocuadrado.py  # Strictly Metro Cuadrado parsing logic.
+"""
+
 import json
 import logging
 import re
@@ -115,7 +129,10 @@ def _parse_area(text: str | None) -> float | None:
 
 
 def _slug_from_url(url: str) -> str:
-    tail = url.rstrip("/").rsplit("/", 1)[-1] or url
+    # Slug from the path's last segment only — drop any ?query/#fragment so
+    # tracking params (e.g. MC's ?src_url=...) don't leak into the id.
+    path = urlparse(url).path.rstrip("/")
+    tail = path.rsplit("/", 1)[-1] or path or url
     return re.sub(r"[^\w\-]", "_", tail)[:80]
 
 
@@ -685,37 +702,64 @@ def _parse_fincaraiz_detail(page, url: str) -> Listing | None:
     )
 
 
+def _mc_property_data(html: str) -> dict[str, Any]:
+    """Extract Metro Cuadrado's main property object from its RSC stream.
+
+    MC retired the ``__NEXT_DATA__`` blob; the detail object now ships as
+    escaped JSON inside a ``self.__next_f.push([1,"..."])`` chunk, anchored by
+    the ``"data":{"propertyId":...}`` key. We isolate that object's leading
+    slice, decode the escaped quotes, and pull each scalar field with plain
+    regex — returning a flat dict keyed by MC's own field names. Returns ``{}``
+    when the anchor is absent so the caller falls back to the DOM cleanly.
+    """
+    idx = html.find('\\"data\\":{\\"propertyId\\"')
+    if idx == -1:
+        return {}
+    # 8 KB of raw (escaped) chars comfortably spans every scalar field; the
+    # full object runs much longer (the free-text description sits ~17 KB in).
+    blob = html[idx:idx + 8000].replace('\\"', '"')
+
+    def _num(key: str) -> str | None:
+        m = re.search(rf'"{key}"\s*:\s*"?(-?\d+(?:\.\d+)?)"?', blob)
+        return m.group(1) if m else None
+
+    def _txt(key: str) -> str | None:
+        m = re.search(rf'"{key}"\s*:\s*"((?:[^"\\]|\\.)*)"', blob)
+        if not m:
+            return None
+        try:
+            return json.loads('"' + m.group(1) + '"')
+        except json.JSONDecodeError:
+            return m.group(1)
+
+    data: dict[str, Any] = {}
+    # Prices, areas and coordinates → float.
+    for key in ("salePrice", "rentPrice", "area", "areac", "lat", "lon"):
+        raw = _num(key)
+        if raw is not None:
+            data[key] = float(raw)
+    # Room/bath/parking counts ship as quoted strings ("3") → int.
+    for key in ("rooms", "bathrooms", "garages"):
+        raw = _num(key)
+        if raw is not None:
+            try:
+                data[key] = int(float(raw))
+            except ValueError:
+                pass
+    for key in ("neighborhood", "commonNeighborhood", "comment"):
+        val = _txt(key)
+        if val:
+            data[key] = val
+    return data
+
+
 def _parse_metrocuadrado_detail(page, url: str) -> Listing | None:
     html = _page_html(page)
 
-    # Metro Cuadrado is a Next.js app — most of the structured data lives in
-    # __NEXT_DATA__. We pull what's easy from JSON and fall back to DOM.
-    next_data: dict[str, Any] = {}
-    m = re.search(
-        r'<script[^>]+id=["\']__NEXT_DATA__["\'][^>]*>(.*?)</script>',
-        html,
-        re.DOTALL,
-    )
-    if m:
-        try:
-            next_data = json.loads(m.group(1))
-        except json.JSONDecodeError:
-            next_data = {}
-
-    def _dig(d: Any, *keys: str) -> Any:
-        for k in keys:
-            if not isinstance(d, dict):
-                return None
-            d = d.get(k)
-        return d
-
-    propsroot = _dig(next_data, "props", "pageProps") or {}
-    propdata = (
-        _dig(propsroot, "propertyDetail")
-        or _dig(propsroot, "property")
-        or _dig(propsroot, "data")
-        or {}
-    )
+    # Metro Cuadrado retired __NEXT_DATA__; the detail object now streams as
+    # escaped JSON inside a self.__next_f.push(...) chunk. _mc_property_data
+    # isolates and decodes it; DOM/page-text fallbacks below cover the rest.
+    propdata = _mc_property_data(html)
 
     title = _first_text(page, "h1::text") or (propdata.get("title") if isinstance(propdata, dict) else None)
     price = _parse_cop_price(_first_text(page, ".property-card__detail-price::text"))
@@ -792,16 +836,10 @@ def _parse_metrocuadrado_detail(page, url: str) -> Listing | None:
         parking = _find_labeled_int(page_text, r"parqueader[oa]s?|garaj[ea]s?")
 
     coordinates = None
-    if isinstance(propdata, dict):
-        lat = propdata.get("latitude") or _dig(propdata, "coordinates", "lat")
-        lon = (
-            propdata.get("longitude")
-            or _dig(propdata, "coordinates", "lon")
-            or _dig(propdata, "coordinates", "lng")
-        )
+    lat, lon = propdata.get("lat"), propdata.get("lon")
+    if lat is not None and lon is not None:
         try:
-            if lat is not None and lon is not None:
-                coordinates = {"lat": float(lat), "lon": float(lon)}
+            coordinates = {"lat": float(lat), "lon": float(lon)}
         except (TypeError, ValueError):
             coordinates = None
     if coordinates is None:
