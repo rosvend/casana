@@ -1,4 +1,4 @@
-from langgraph import START,END,StateGraph
+from langgraph.graph import START, END, StateGraph
 from typing import Literal
 from src.state import PropertyFinderState
 from src.agents import (
@@ -46,6 +46,10 @@ until the user's requirements are satisfied.
 
 This agent will be responsible for softening the constraints of the user's requirements if the evaluator_agent determines
 that the current requirements are too strict and cannot be met with the available information.
+
+8. synthesizer_agent:
+This agent will take all the information gathered from the properties_agent and the news agent and synthesize it into a coherent response
+that can be evaluated by the evaluator_agent. It will also merge listings, news and run verification results into a single candidate list for the evaluator_agent to assess.
 
 """
 
