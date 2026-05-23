@@ -34,7 +34,10 @@ location, size, and other relevant details about the properties.
 This agent is responsible for fetching and providing the latest news related to the real estate market in the user's area of interest such as 
 security, events and other relevant information.
 
-5. whatsapp_agent: This agent will handle communication with the user via WhatsApp with phone numbers listed to check that the listing is still available. 
+5. whatsapp_agent: (This agent only runs with the top chosen properties that passed the evaluation)
+This agent will handle communication with the real estate agency or landlord that published the listing via WhatsApp with phone numbers listed 
+to check that the listing is still available. It will send an outbounding message to the contact number provided in the listing and wait for a response for about 60 seconds.
+If the agent was able to get valuable information from the contact's answer, it will tell the user about it. Otherwise, it will just inform the user that no response was received.
 
 6. evaluator_agent: 
 
@@ -45,7 +48,8 @@ until the user's requirements are satisfied.
 7. softener_agent: 
 
 This agent will be responsible for softening the constraints of the user's requirements if the evaluator_agent determines
-that the current requirements are too strict and cannot be met with the available information.
+that the current requirements are too strict and cannot be met with the available information. Each softening attempt will pass the memory of why it failed
+to meet the requirements.
 
 8. synthesizer_agent:
 This agent will take all the information gathered from the properties_agent and the news agent and synthesize it into a coherent response
@@ -62,11 +66,11 @@ def requirements_router(state: PropertyFinderState) -> Literal["router_agent", "
 
 def evaluation_router(
     state: PropertyFinderState,
-) -> Literal["done", "best_effort", "softener_agent"]:
-    """After evaluation: succeed, give up, or soften and retry."""
-    evaluation = state.get("evaluation", {}) #TODO: Change to state["evaluation"].passes 
+) -> Literal["whatsapp_agent", "best_effort", "softener_agent"]:
+    """After evaluation: verify availability, give up, or soften and retry."""
+    evaluation = state.get("evaluation", {}) #TODO: Change to state["evaluation"].passes
     if evaluation.get("passes"):
-        return "done"
+        return "whatsapp_agent"
     if state.get("softening_attempts", 0) >= max_softening_attempts:
         return "best_effort"
     return "softener_agent"
@@ -107,24 +111,26 @@ def build_graph():
     graph.add_edge("router_agent", "properties_agent")
     graph.add_edge("router_agent", "news_agent")
 
-    # whatsapp_agent depends on listings
-    graph.add_edge("properties_agent", "whatsapp_agent")
-    graph.add_edge("whatsapp_agent", "synthesizer")
+    # Properties and news fan in to the synthesizer in parallel.
+    graph.add_edge("properties_agent", "synthesizer")
     graph.add_edge("news_agent", "synthesizer")
 
     graph.add_edge("synthesizer", "evaluator_agent")
 
-    # Loop pattern: evaluator decides done / give up / soften
+    # Loop pattern: evaluator decides verify / give up / soften.
+    # On "passes", whatsapp_agent runs once at the end of the pipeline to
+    # confirm availability on the top candidates before returning results.
     graph.add_conditional_edges(
         "evaluator_agent",
         evaluation_router,
         {
-            "done": "done",
+            "whatsapp_agent": "whatsapp_agent",
             "best_effort": "best_effort",
             "softener_agent": "softener_agent",
         },
     )
 
+    graph.add_edge("whatsapp_agent", "done")
     graph.add_edge("softener_agent", "router_agent")
     graph.add_edge("done", END)
     graph.add_edge("best_effort", END)

@@ -1,0 +1,55 @@
+# Local EvolutionAPI stack for whatsapp_agent.
+#
+# Start:   docker compose -f docker-compose.evolution.yml up -d
+# Pair:    open http://localhost:8080/manager and scan the QR for instance
+#          $EVOLUTION_INSTANCE (default: estatia) with the WhatsApp account
+#          you want to send from.
+# Stop:    docker compose -f docker-compose.evolution.yml down
+#
+# Requires the same EvolutionAPI vars from .env that whatsapp_agent reads
+# (EVOLUTION_API_KEY is reused as the AUTHENTICATION_API_KEY here).
+
+services:
+  evolution-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: evolution
+      POSTGRES_DB: evolution
+    volumes:
+      - evolution_postgres_data:/var/lib/postgresql/data
+    networks: [evolution]
+
+  evolution-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - evolution_redis_data:/data
+    networks: [evolution]
+
+  evolution-api:
+    image: evoapicloud/evolution-api:latest
+    restart: unless-stopped
+    depends_on: [evolution-postgres, evolution-redis]
+    ports:
+      - "8080:8080"
+    environment:
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:-change-me}
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://evolution:evolution@evolution-postgres:5432/evolution?schema=public
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://evolution-redis:6379/0
+      CONFIG_SESSION_PHONE_CLIENT: Estatia
+      CONFIG_SESSION_PHONE_NAME: Chrome
+      LANGUAGE: en
+    networks: [evolution]
+
+networks:
+  evolution:
+
+volumes:
+  evolution_postgres_data:
+  evolution_redis_data:

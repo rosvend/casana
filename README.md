@@ -48,3 +48,17 @@ cp .env.example .env
 # Run
 uv run src.main
 ```
+
+## WhatsApp verification (optional)
+
+`whatsapp_agent` reaches out to brokers via a local [EvolutionAPI](https://github.com/EvolutionAPI/evolution-api) gateway to confirm that the top-scoring listings are still available. It is **off by default** — set `WHATSAPP_ENABLED=true` in `.env`, or pass `whatsapp_enabled=True` in the graph state per run.
+
+```bash
+# Start the local Evolution stack (Postgres + Redis + Evolution API)
+docker compose -f docker-compose.evolution.yml up -d
+
+# Open http://localhost:8080/manager and scan the QR for instance $EVOLUTION_INSTANCE
+# (default: estatia) with the WhatsApp account you want to send from.
+```
+
+The agent only contacts candidates with `match_score >= 0.70`, capped at the top 3 by score, and adds a randomized 3–8 s delay between sends as a basic anti-ban measure. Listings without a phone number, or runs where outreach is disabled, are still promoted to `VerifiedListing` with `availability_confirmed=False` and a note explaining why — the downstream schema stays uniform.

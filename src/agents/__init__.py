@@ -7,8 +7,8 @@ re-exported here under that name, bound to its node *function* — so
 module.
 
 Only the completed agents appear here. The remaining names
-(``router_agent``, ``whatsapp_agent``) still resolve via submodule import
-until those nodes are implemented; add them here as each is finished.
+(``router_agent``) still resolve via submodule import until those nodes are
+implemented; add them here as each is finished.
 """
 
 from src.agents.evaluator_agent import evaluator_node as evaluator_agent
@@ -17,6 +17,7 @@ from src.agents.properties_agent import properties_node as properties_agent
 from src.agents.requirements_agent import requirements_node as requirements_agent
 from src.agents.softener_agent import softener_node as softener_agent
 from src.agents.synthesizer_agent import synthesizer_node as synthesizer_agent
+from src.agents.whatsapp_agent import whatsapp_node as whatsapp_agent
 
 __all__ = [
     "requirements_agent",
@@ -25,4 +26,5 @@ __all__ = [
     "synthesizer_agent",
     "evaluator_agent",
     "softener_agent",
+    "whatsapp_agent",
 ]

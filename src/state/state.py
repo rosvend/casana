@@ -61,10 +61,19 @@ class PropertyFinderState(TypedDict, total=False):
     """Gates `requirements_router` in graph.py. False → loop back to
     requirements_agent for more clarification; True → proceed to router_agent."""
 
-    # 3. Routing decisions 
+    # 3. Routing decisions
     active_branches: list[str]
     """Which fan-out branches router_agent activated this iteration (e.g.
     ['properties_agent', 'news_agent']). Replaced on each router pass."""
+
+    whatsapp_enabled: bool
+    """User toggle for the outbound WhatsApp verification step. Set per-run
+    (e.g. by the entrypoint or a UI checkbox). When this key is present it
+    wins over the ``WHATSAPP_ENABLED`` environment variable; when absent,
+    whatsapp_agent falls back to the env var (default False). False ⇒ the
+    node promotes candidates to ``VerifiedListing`` with
+    ``availability_confirmed=False`` and a note explaining outreach was
+    skipped, keeping the downstream schema uniform."""
 
     # 4. Parallel fetch outputs 
     raw_listings: list[Listing]
