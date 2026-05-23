@@ -7,11 +7,8 @@
 
 Autonomous multi-agent system for real estate acquisition. Agents search listings across multiple sources, verify availability, evaluate properties against user requirements, and iteratively refine results — all without human intervention.
 
-A user describes what they're looking for (location, budget, size, type). Estatia structures those requirements, fans out to specialized agents that run concurrently, and returns a curated, ranked shortlist. If no results meet the criteria, the system autonomously relaxes constraints and retries up to three times before returning a best-effort result.
-
 > [!IMPORTANT]
 > Estatia is currently in **early development**. APIs, prompts, and agent orchestration flows may change frequently.
-> We do not recommend inputting sensitive credentials directly into LLMs or AI agents (any unknown software, really).
 
 ## Architecture
 
