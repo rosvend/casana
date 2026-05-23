@@ -98,10 +98,20 @@ class Candidate(BaseModel):
     Read by: `evaluator_agent`, `done_node`, `best_effort_node`.
     """
 
-    listing: VerifiedListing = Field(..., description="The underlying verified listing.")
+    listing: Listing | VerifiedListing = Field(
+        ...,
+        description=(
+            "The underlying listing. Accepts either a verified one (after whatsapp_agent) "
+            "or a raw one (when the synthesizer runs before verification is wired)."
+        ),
+    )
     relevant_news: dict[NewsCategory, list[NewsItem]] = Field(
         default_factory=dict,
         description="News items already filtered to this candidate's zone, grouped by category.",
+    )
+    source_urls: list[str] = Field(
+        default_factory=list,
+        description="All portal URLs that contributed to this candidate after cross-portal merging.",
     )
     match_notes: str | None = Field(
         default=None,
