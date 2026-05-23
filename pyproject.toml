@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "ddgs>=9.14.4",
     "langchain-community>=0.4.1",
     "langchain-core>=0.3",
     "langchain-openai>=1.2.1",
@@ -16,4 +17,8 @@ dependencies = [
     "python-dotenv>=1.0",
     "scrapling[ai,all]>=0.4.8",
     "searxng>=0.0.0.dev0",
+    "tavily-python>=0.7.24",
 ]
+
+[dependency-groups]
+dev = []

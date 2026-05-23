@@ -1,8 +1,9 @@
 """Area news fetched by `news_agent`, grouped by sub-query category.
 
 `news_agent` issues several sub-queries per zone (safety, transport,
-infrastructure, events) and returns them already categorized so the
-synthesizer can attach the right slice to each candidate's zone.
+infrastructure, events, real-estate market) and returns them already
+categorized so the synthesizer can attach the right slice to each
+candidate's zone.
 """
 
 from datetime import datetime
@@ -10,9 +11,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-NewsCategory = Literal["crime_safety", "transportation", "infrastructure", "events"]
-"""Closed set of news sub-queries `news_agent` issues. Keeping this a Literal
-means routing logic and dict keys stay in sync via the type checker."""
+NewsCategory = Literal[
+    "crime_safety", "transportation", "infrastructure", "events", "market_trends"
+]
+"""Closed set of news sub-queries `news_agent` issues — crime/safety, transport,
+urban infrastructure, local events, and real-estate market trends (prices,
+demand, new developments). Keeping this a Literal means routing logic and dict
+keys stay in sync via the type checker."""
 
 
 class NewsItem(BaseModel):
