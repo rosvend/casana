@@ -183,6 +183,14 @@ def news_node(state: PropertyFinderState) -> dict:
     Returns all-empty category lists — never hallucinated news — when no
     location is known or search yields nothing.
     """
+    # News is invariant under softening — the zone/location don't change, only
+    # the property constraints (price, size, bedrooms). Re-running would burn
+    # Tavily credits for identical queries, so skip if we've already produced
+    # a NewsResults dict in a prior superstep.
+    if state.get("news_results") is not None:
+        logger.info("news_node: news_results already populated, skipping refetch")
+        return {}
+
     requirements = state.get("requirements")
     location, zone = _resolve_place(requirements)
 

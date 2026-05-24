@@ -69,6 +69,20 @@ Scoring rules — follow them literally:
 - The reasoning must cite (a) the highest-weighted axis and how the
   candidate fared on it, and (b) any specific news item that moved the
   score.
+
+GEOGRAPHIC DISCRIMINATION (critical):
+- You must evaluate news strictly against the candidate's listed zone
+  (neighborhood). The candidate's zone is shown in the CANDIDATE LISTING
+  block; each news item shows its own zone in the ZONE NEWS block.
+- Do NOT penalize a property for negative news whose zone differs from the
+  candidate's zone, or for general city-wide news that does not explicitly
+  mention the candidate's zone. Such news is geographically irrelevant.
+- Differentiate your scores across candidates based on how news impacts
+  each candidate's exact neighborhood — two candidates in different zones
+  must not receive the same score unless their zone-specific news is
+  equivalent.
+- In `reasoning`, explicitly state if you ignored any news item as
+  geographically irrelevant, naming the item and the mismatched zone.
 """
 
 
@@ -243,7 +257,10 @@ def _render_news(news: dict[NewsCategory, list[NewsItem]]) -> str:
         if not items:
             continue
         for item in items:
-            blocks.append(f"  - [{category}] {item.title} — {item.summary}")
+            zone_label = item.zone or "(no zone)"
+            blocks.append(
+                f"  - [{category}] (zone: {zone_label}) {item.title} — {item.summary}"
+            )
     return "\n".join(blocks)
 
 
