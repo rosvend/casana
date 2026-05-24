@@ -10,13 +10,25 @@ enrichment — can be verified deterministically in well under a second.
 
 from __future__ import annotations
 
+import importlib
 import sys
 import threading
 import time
 
-import src.agents.properties_agent as pa
+# ``src/agents/__init__.py`` re-binds each ``xxx_agent`` submodule name to its
+# node *function* (so the graph can do ``from src.agents import properties_agent``
+# and get a callable). That rebinding shadows the submodule on the package's
+# namespace, so ``import src.agents.properties_agent as pa`` returns the
+# *function*, not the module — and ``pa.search_listings = ...`` silently
+# assigns onto the function instead of patching the module global the node
+# actually reads. Reach for the real module via ``sys.modules`` instead.
 from src.agents.properties_agent import _balanced_shortlist, properties_node
 from src.state import Listing, PropertyFinderState
+
+pa = importlib.import_module("src.agents.properties_agent")
+assert pa is sys.modules["src.agents.properties_agent"], (
+    "properties_agent module shadowed — patches will not take effect"
+)
 
 ENRICH_SLEEP = 0.5  # simulated per-fetch latency
 
