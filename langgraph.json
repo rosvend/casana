@@ -1,0 +1,7 @@
+{
+    "dependencies": ["."],
+    "graphs": {
+        "estatia": "./src/graph/graph.py:build_graph"
+    },
+    "env": ".env"
+}
