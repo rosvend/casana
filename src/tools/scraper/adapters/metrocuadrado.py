@@ -26,6 +26,7 @@ from src.tools.scraper.core import (
     _page_html,
     _parse_cop_price,
     _slug_from_url,
+    _zone_slug,
 )
 
 
@@ -89,13 +90,26 @@ class MetroCuadradoAdapter(PortalAdapter):
     hosts = ("metrocuadrado.com",)
 
     def build_search_url(
-        self, slug: str, transaction: str, location: str, filters: dict[str, int]
+        self,
+        slug: str,
+        transaction: str,
+        location: str,
+        filters: dict[str, int],
+        zone: str | None = None,
     ) -> str:
         """Metro Cuadrado packs all filters into a single hyphen-joined slug
         segment and requires the ``?search=form`` suffix to parse it. Prices are
         expressed in *millions* (integer), not raw COP. Ranges work for price
-        and area; bedrooms/bath/estrato/parking only accept a single value."""
-        base = f"https://www.metrocuadrado.com/{slug}/{transaction}/{location}/"
+        and area; bedrooms/bath/estrato/parking only accept a single value.
+
+        Zone slot: live-verified to sit *after* the city, e.g.
+        ``/apartamento/arriendo/bogota/chapinero/``.
+        """
+        z = _zone_slug(zone)
+        if z:
+            base = f"https://www.metrocuadrado.com/{slug}/{transaction}/{location}/{z}/"
+        else:
+            base = f"https://www.metrocuadrado.com/{slug}/{transaction}/{location}/"
         tokens: list[str] = []
 
         min_p = filters.get("min_price")

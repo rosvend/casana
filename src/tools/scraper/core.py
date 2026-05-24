@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from typing import Any, Callable
 from urllib.parse import quote, urlparse
 
@@ -116,6 +117,18 @@ def _safe(fn: Callable[..., Any], *args: Any, default: Any = None, **kwargs: Any
     except Exception as e:  # noqa: BLE001 — by design
         logger.debug("safe-call failed: %s(%r) → %s", getattr(fn, "__name__", fn), args, e)
         return default
+
+
+def _zone_slug(zone: str | None) -> str | None:
+    """Lowercase, strip accents, collapse whitespace to dashes — URL-safe."""
+    if zone is None:
+        return None
+    z = zone.strip().lower()
+    if not z:
+        return None
+    nfkd = unicodedata.normalize("NFKD", z)
+    no_acc = "".join(c for c in nfkd if not unicodedata.combining(c))
+    return "-".join(no_acc.split())
 
 
 # Coordinate + contact-link extraction (shared across sites).
@@ -342,6 +355,7 @@ __all__ = [
     "_parse_area",
     "_slug_from_url",
     "_safe",
+    "_zone_slug",
     "_extract_coordinates",
     "_format_whatsapp_link",
     "_extract_contact_links",

@@ -28,6 +28,7 @@ from src.tools.scraper.core import (
     _parse_cop_price,
     _safe,
     _slug_from_url,
+    _zone_slug,
     logger,
 )
 
@@ -133,12 +134,27 @@ class FincaRaizAdapter(PortalAdapter):
     hosts = ("fincaraiz.com.co",)
 
     def build_search_url(
-        self, slug: str, transaction: str, location: str, filters: dict[str, int]
+        self,
+        slug: str,
+        transaction: str,
+        location: str,
+        filters: dict[str, int],
+        zone: str | None = None,
     ) -> str:
         """Finca Raíz uses additive path slugs, one per segment. Order is stable
         (price → rooms → bath → estrato → area → parking) so URLs are
-        deterministic and reproducible."""
-        base = f"https://www.fincaraiz.com.co/{transaction}/{slug}/{location}"
+        deterministic and reproducible.
+
+        Zone slot: live-verified to sit *before* the city, e.g.
+        ``/arriendo/apartamentos/chapinero/bogota``. The portal normalizes
+        loose neighborhood names via 301s (``chapinero`` → ``chapinero-alto``)
+        so we just pass the user's slug through.
+        """
+        z = _zone_slug(zone)
+        if z:
+            base = f"https://www.fincaraiz.com.co/{transaction}/{slug}/{z}/{location}"
+        else:
+            base = f"https://www.fincaraiz.com.co/{transaction}/{slug}/{location}"
         parts: list[str] = []
         if (v := filters.get("min_price")) is not None:
             parts.append(f"desde-{v}")
