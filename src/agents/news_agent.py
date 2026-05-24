@@ -35,7 +35,7 @@ from src.tools.search import get_search_provider
 load_dotenv()
 
 logger = logging.getLogger(__name__)
-MODEL = "gpt-4o-mini"
+MODEL = "gpt-5-nano"
 
 #: Year stamped into every query so search engines surface fresh context.
 SEARCH_YEAR = 2026

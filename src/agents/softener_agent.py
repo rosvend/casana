@@ -25,7 +25,7 @@ from src.state import (
     StructuredRequirements,
 )
 
-MODEL = "gpt-4o-mini"
+MODEL = "gpt-5-nano"
 MAX_RELAX_PCT = 0.15
 
 SYSTEM_PROMPT = (

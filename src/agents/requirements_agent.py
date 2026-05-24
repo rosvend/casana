@@ -36,7 +36,7 @@ from src.utils.geography import normalize_geography
 load_dotenv()
 
 logger = logging.getLogger(__name__)
-MODEL = "gpt-4o-mini"
+MODEL = "gpt-5-nano"
 
 #: Default macro-priority split, mirroring StructuredRequirements.priority_weights.
 #: Used as the fallback when the LLM returns an empty or zero-sum weight dict.

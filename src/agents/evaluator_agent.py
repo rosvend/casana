@@ -48,7 +48,7 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-MODEL = "gpt-4o-mini"
+MODEL = "gpt-5-nano"
 
 _SYSTEM_PROMPT = """\
 You are a strict real estate match judge. Given a user's requirements (with
