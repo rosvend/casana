@@ -99,6 +99,10 @@ def _extract_params(
             if isinstance(c.exact_value, str) and c.exact_value.strip():
                 url_params["location"] = c.exact_value.strip().lower()
 
+        elif field == "zone":
+            if isinstance(c.exact_value, str) and c.exact_value.strip():
+                url_params["zone"] = c.exact_value.strip().lower()
+
         elif field == "property_type":
             if isinstance(c.exact_value, str):
                 url_params["property_type"] = _PROPERTY_TYPE_SLUGS.get(
