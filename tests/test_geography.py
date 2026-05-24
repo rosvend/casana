@@ -57,6 +57,24 @@ def test_canonical_location_strips_accents_and_case():
     assert canonical_location("MEDELLÍN") == "medellin"
 
 
+def test_canonical_location_matches_bogota_against_dane_dc_suffix(caplog):
+    """DANE lists Bogotá as 'BOGOTÁ, D.C.' — user input 'bogota' must hit it."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="src.utils.geography"):
+        result = canonical_location("bogota")
+    assert result == "bogota"
+    # If the DANE branch matched, no warning was logged. Regression-guard:
+    assert not any(
+        "not in DANE list" in rec.message for rec in caplog.records
+    ), "canonical_location('bogota') fell through to the degraded path"
+
+
+def test_canonical_location_accepts_explicit_dc_suffix():
+    assert canonical_location("Bogotá D.C.") == "bogota"
+    assert canonical_location("BOGOTÁ, D.C.") == "bogota"
+
+
 def test_canonical_location_resolves_known_zone_to_parent_city():
     assert canonical_location("Chapinero") == "bogota"
     assert canonical_location("El Poblado") == "medellin"

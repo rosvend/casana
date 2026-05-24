@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import csv
 import logging
+import re
 import unicodedata
 from functools import lru_cache
 from pathlib import Path
@@ -55,16 +56,31 @@ def _normalize(text: str) -> str:
     return "".join(c for c in nfkd if not unicodedata.combining(c))
 
 
+# Strips a trailing administrative-division suffix like ", D.C." from a
+# normalized name. Bogotá ships in the DANE list as "BOGOTÁ, D.C." while
+# user input is invariably bare ("bogota"); this lets both forms match.
+_ADMIN_SUFFIX_RE = re.compile(r",?\s*d\.?\s*c\.?\s*$")
+
+
 @lru_cache(maxsize=1)
 def _municipality_set() -> frozenset[str]:
-    """Load the DANE list once; cache the normalized name set."""
+    """Load the DANE list once; cache the normalized name set.
+
+    Each DANE row is added in two forms: the literal normalized name and a
+    version with the ``, D.C.`` administrative suffix stripped — so user
+    input ``"bogota"`` matches the canonical entry ``"BOGOTÁ, D.C."``.
+    """
     names: set[str] = set()
     with _CSV_PATH.open(encoding="utf-8", newline="") as fh:
         reader = csv.DictReader(fh)
         for row in reader:
             name = row.get("Nombre Municipio") or ""
             if name:
-                names.add(_normalize(name))
+                norm = _normalize(name)
+                names.add(norm)
+                stripped = _ADMIN_SUFFIX_RE.sub("", norm).strip()
+                if stripped and stripped != norm:
+                    names.add(stripped)
     return frozenset(names)
 
 
@@ -100,11 +116,19 @@ def canonical_location(s: str | None) -> str | None:
     same string. Returns ``None`` only for genuinely empty input — unknown
     cities fall through with a warning so URL building and substring matching
     still work.
+
+    Inputs carrying an administrative suffix like ``"Bogotá D.C."`` are
+    canonicalized to the bare-name form (``"bogota"``) to mirror how the
+    DANE-derived set is enriched in :func:`_municipality_set`.
     """
     if not isinstance(s, str) or not s.strip():
         return None
+    municipalities = _municipality_set()
     norm = _normalize(s)
-    if norm in _municipality_set():
+    stripped = _ADMIN_SUFFIX_RE.sub("", norm).strip()
+    if stripped and stripped in municipalities:
+        return stripped
+    if norm in municipalities:
         return norm
     if norm in KNOWN_ZONES:
         return KNOWN_ZONES[norm]
