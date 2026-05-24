@@ -32,6 +32,7 @@ from itertools import zip_longest
 
 from src.state import Constraint, Listing, PropertyFinderState, StructuredRequirements
 from src.tools import extract_property_details, search_listings
+from src.utils.geography import canonical_location, canonical_zone
 
 logger = logging.getLogger(__name__)
 
@@ -97,11 +98,21 @@ def _extract_params(
 
         if field == "location":
             if isinstance(c.exact_value, str) and c.exact_value.strip():
-                url_params["location"] = c.exact_value.strip().lower()
+                canon = canonical_location(c.exact_value)
+                if canon:
+                    url_params["location"] = canon
 
         elif field == "zone":
-            if isinstance(c.exact_value, str) and c.exact_value.strip():
-                url_params["zone"] = c.exact_value.strip().lower()
+            # Soft zone constraints don't gate, so they shouldn't narrow the
+            # search URL either — softener relies on this to widen results.
+            if (
+                c.constraint_type == "hard"
+                and isinstance(c.exact_value, str)
+                and c.exact_value.strip()
+            ):
+                canon = canonical_zone(c.exact_value)
+                if canon:
+                    url_params["zone"] = canon
 
         elif field == "property_type":
             if isinstance(c.exact_value, str):

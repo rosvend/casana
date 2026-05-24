@@ -43,6 +43,7 @@ from src.state import (
     StructuredRequirements,
     VerifiedListing,
 )
+from src.utils.geography import canonical_location, canonical_zone
 
 load_dotenv()
 
@@ -264,6 +265,26 @@ def _render_news(news: dict[NewsCategory, list[NewsItem]]) -> str:
     return "\n".join(blocks)
 
 
+def _exact_match(field: str, value: object, expected: object) -> bool:
+    """Compare a scraped value against a constraint's ``exact_value``.
+
+    Location/zone strings are normalized through the same canonical helpers
+    used by ``requirements_agent`` and the URL builder, then matched
+    substring-style — scraped zones like ``"Las brisas, Bogotá, Colombia"``
+    must satisfy a constraint expecting ``"bogota"``. Every other field keeps
+    its existing strict equality, so categorical fields (``property_type``,
+    ``transaction_type``) and numerics behave exactly as before.
+    """
+    if field in ("location", "zone"):
+        normalizer = canonical_location if field == "location" else canonical_zone
+        actual_canon = normalizer(value) if isinstance(value, str) else None
+        expected_canon = normalizer(expected) if isinstance(expected, str) else None
+        if actual_canon is None or expected_canon is None:
+            return value == expected
+        return expected_canon == actual_canon or expected_canon in actual_canon
+    return value == expected
+
+
 def _check_hard_constraints(
     listing: Listing | VerifiedListing, hard_constraints: list[Constraint]
 ) -> list[FailureReason]:
@@ -285,7 +306,7 @@ def _check_hard_constraints(
             continue
 
         if constraint.exact_value is not None:
-            if value != constraint.exact_value:
+            if not _exact_match(constraint.field, value, constraint.exact_value):
                 failures.append(
                     FailureReason(
                         constraint_field=constraint.field,

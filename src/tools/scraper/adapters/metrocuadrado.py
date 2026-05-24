@@ -15,6 +15,7 @@ from urllib.parse import urljoin
 
 from src.state.listings import Listing
 from src.tools.scraper.adapters.base import PortalAdapter
+from src.utils.geography import canonical_location
 from src.tools.scraper.core import (
     _extract_contact_links,
     _extract_coordinates,
@@ -117,6 +118,7 @@ class MetroCuadradoAdapter(PortalAdapter):
         """
         if page > 1:
             return None
+        location = canonical_location(location) or location
         z = _zone_slug(zone)
         if z:
             base = f"https://www.metrocuadrado.com/{slug}/{transaction}/{location}/{z}/"

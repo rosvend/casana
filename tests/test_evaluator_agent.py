@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import os
 
-from src.agents.evaluator_agent import evaluator_node
+from src.agents.evaluator_agent import _check_hard_constraints, evaluator_node
 from src.state import (
     Candidate,
     Constraint,
@@ -236,6 +236,64 @@ def main() -> int:
     ok &= _scenario_hard_constraint_violation_sets_passes_false()
     print(f"\n{'ALL TESTS PASSED' if ok else 'SOME TESTS FAILED'}")
     return 0 if ok else 1
+
+
+def test_zone_substring_match_no_violation() -> None:
+    """A hard zone constraint must match scraped zones that contain the city.
+
+    Regression for the softener-no-op bug: before the fix the evaluator did
+    case-sensitive ``value != expected``, so a constraint of ``"bogota"`` would
+    fail against ``"Las brisas, Bogotá, Colombia"`` and the loop would never
+    surface a passing candidate.
+    """
+    listing = _listing(id="fincaraiz:Z", price=2_500_000, zone="Las brisas, Bogotá, Colombia")
+    constraint = Constraint(
+        field="zone",
+        exact_value="bogota",
+        constraint_type="hard",
+        importance="critical",
+    )
+    failures = _check_hard_constraints(listing, [constraint])
+    assert failures == [], f"expected zero violations, got {failures}"
+
+
+def test_zone_accent_insensitive_match() -> None:
+    listing = _listing(id="fincaraiz:Y", price=2_500_000, zone="Chapinero")
+    constraint = Constraint(
+        field="zone",
+        exact_value="chapinero",
+        constraint_type="hard",
+        importance="critical",
+    )
+    assert _check_hard_constraints(listing, [constraint]) == []
+
+
+def test_zone_mismatch_still_fails() -> None:
+    """The new normalization must not erase real mismatches."""
+    listing = _listing(id="fincaraiz:X", price=2_500_000, zone="Suba")
+    constraint = Constraint(
+        field="zone",
+        exact_value="chapinero",
+        constraint_type="hard",
+        importance="critical",
+    )
+    failures = _check_hard_constraints(listing, [constraint])
+    assert len(failures) == 1
+    assert failures[0].constraint_field == "zone"
+
+
+def test_categorical_exact_match_preserves_strict_equality() -> None:
+    """``property_type`` / ``transaction_type`` must still match strictly."""
+    listing = _listing(id="fincaraiz:T", price=2_500_000)
+    listing.transaction_type = "sale"
+    constraint = Constraint(
+        field="transaction_type",
+        exact_value="rent",
+        constraint_type="hard",
+        importance="critical",
+    )
+    failures = _check_hard_constraints(listing, [constraint])
+    assert len(failures) == 1
 
 
 # Pytest discovery — turn the boolean returns into asserts.

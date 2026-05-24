@@ -15,6 +15,7 @@ from urllib.parse import quote, urljoin
 
 from src.state.listings import Listing
 from src.tools.scraper.adapters.base import PortalAdapter
+from src.utils.geography import canonical_location
 from src.tools.scraper.core import (
     _extract_contact_links,
     _extract_coordinates,
@@ -154,6 +155,7 @@ class FincaRaizAdapter(PortalAdapter):
         Pagination: ``/paginaN`` (no hyphen, no separator) goes last so it
         doesn't disturb filter-slug ordering. ``page=1`` is omitted entirely.
         """
+        location = canonical_location(location) or location
         z = _zone_slug(zone)
         if z:
             base = f"https://www.fincaraiz.com.co/{transaction}/{slug}/{z}/{location}"

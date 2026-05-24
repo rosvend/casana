@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.agents.softener_agent import softener_node  # noqa: E402
+from src.agents.softener_agent import _relax_one, softener_node  # noqa: E402
 from src.state import (  # noqa: E402
     Constraint,
     EvaluationResult,
@@ -141,6 +141,121 @@ def test_price_relaxed_capped_at_15pct() -> None:
 
         pytest.skip("OPENAI_API_KEY not set")
     assert _scenario_price_relaxed_capped_at_15pct()
+
+
+# Pure unit tests for the relaxation logic — no LLM needed.
+def test_relax_one_zone_signals_remove() -> None:
+    """A hard zone failure must signal removal so _extract_params drops it."""
+    constraint = Constraint(
+        field="zone",
+        exact_value="chapinero",
+        constraint_type="hard",
+        importance="critical",
+    )
+    reason = FailureReason(
+        constraint_field="zone",
+        expected="== chapinero",
+        actual="Las brisas, Bogotá, Colombia",
+        deviation=None,
+        importance="critical",
+    )
+    change = _relax_one(constraint, reason)
+    assert change is not None
+    assert change.get("remove") is True
+    assert "chapinero" in change["previous"]
+    assert change["new"] == "(sin zona)"
+
+
+def test_relax_one_zone_already_soft_returns_none() -> None:
+    constraint = Constraint(
+        field="zone",
+        exact_value="chapinero",
+        constraint_type="soft",
+        importance="important",
+    )
+    reason = FailureReason(
+        constraint_field="zone", expected="", actual="", deviation=None, importance="important",
+    )
+    assert _relax_one(constraint, reason) is None
+
+
+def test_relax_one_location_hard_to_soft() -> None:
+    constraint = Constraint(
+        field="location",
+        exact_value="bogota",
+        constraint_type="hard",
+        importance="critical",
+    )
+    reason = FailureReason(
+        constraint_field="location",
+        expected="== bogota",
+        actual="medellin",
+        deviation=None,
+        importance="critical",
+    )
+    change = _relax_one(constraint, reason)
+    assert change is not None
+    assert constraint.constraint_type == "soft"
+    assert constraint.exact_value == "bogota"  # value preserved for URL targeting
+    assert change.get("remove") is None
+
+
+def test_softener_node_removes_zone_constraint() -> None:
+    """End-to-end: zone failure must pop the constraint from requirements."""
+    if not os.getenv("OPENAI_API_KEY"):
+        import pytest
+
+        pytest.skip("OPENAI_API_KEY not set")
+    requirements = StructuredRequirements(
+        constraints=[
+            Constraint(
+                field="zone",
+                exact_value="chapinero",
+                constraint_type="hard",
+                importance="critical",
+            ),
+            Constraint(
+                field="location",
+                exact_value="bogota",
+                constraint_type="hard",
+                importance="critical",
+            ),
+        ],
+        summary="Arriendo en Chapinero",
+        priority_weights={"price": 0.34, "location": 0.33, "security": 0.33},
+    )
+    evaluation = EvaluationResult(
+        passes=False,
+        candidate_scores=[],
+        aggregate_failure_reasons=[
+            FailureReason(
+                constraint_field="zone",
+                expected="== chapinero",
+                actual="Suba, Bogotá",
+                deviation=None,
+                importance="critical",
+            )
+        ],
+        notes="No candidate in chapinero matched.",
+    )
+    state = PropertyFinderState(
+        user_query="Arriendo en Chapinero",
+        chat_history=[],
+        requirements=requirements,
+        evaluation=evaluation,
+        softening_attempts=0,
+        softening_history=[],
+    )
+    out = softener_node(state)
+    new_req = out.get("requirements")
+    assert new_req is not None
+    fields = {c.field for c in new_req.constraints}
+    assert "zone" not in fields, f"zone should have been removed, got {fields}"
+    assert "location" in fields, "location should be preserved"
+    assert out.get("softening_attempts") == 1
+    hist = out.get("softening_history") or []
+    assert len(hist) == 1 and hist[0].relaxed_constraint == "zone"
+    assert hist[0].new_value == "(sin zona)"
 
 
 if __name__ == "__main__":

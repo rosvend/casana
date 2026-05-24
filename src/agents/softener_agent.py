@@ -65,6 +65,13 @@ def softener_node(state: PropertyFinderState) -> dict:
         change = _relax_one(constraint, reason)
         if change is None:
             continue
+        if change.get("remove"):
+            # Zone failures broaden the search to the whole city by dropping
+            # the constraint outright — _extract_params then omits the zone
+            # slot from the search URL and the scraper returns a wider pool.
+            requirements.constraints = [
+                c for c in requirements.constraints if c is not constraint
+            ]
         change_descriptions.append(change["description"])
         history_entries.append(
             SofteningAttempt(
@@ -132,6 +139,35 @@ def _relax_one(constraint: Constraint, reason: FailureReason) -> dict | None:
             ),
             "previous": f"{prev:.0f} m²",
             "new": f"{new:.0f} m²",
+        }
+
+    if field == "zone":
+        # Already soft (or removed-then-re-added) — nothing left to relax.
+        if constraint.constraint_type == "soft":
+            return None
+        prev = constraint.exact_value if constraint.exact_value is not None else "(zona)"
+        return {
+            "description": (
+                f"Amplié la búsqueda más allá de '{prev}' a toda la ciudad."
+            ),
+            "previous": str(prev),
+            "new": "(sin zona)",
+            "remove": True,
+        }
+
+    if field == "location":
+        # Dropping the city entirely is too aggressive — convert to soft so
+        # the URL still targets the right city but the gate releases.
+        if constraint.constraint_type == "soft":
+            return None
+        constraint.constraint_type = "soft"
+        return {
+            "description": (
+                f"Cambié 'location' de requisito obligatorio a deseable "
+                f"manteniendo '{constraint.exact_value}' como preferencia."
+            ),
+            "previous": "hard",
+            "new": "soft",
         }
 
     if field in ("bedrooms", "bathrooms"):

@@ -13,10 +13,13 @@ dict is an MVP shortcut and rots whenever the product covers a new neighborhood.
 from __future__ import annotations
 
 import csv
+import logging
 import unicodedata
 from functools import lru_cache
 from pathlib import Path
 from typing import TypedDict
+
+logger = logging.getLogger(__name__)
 
 _CSV_PATH = (
     Path(__file__).resolve().parent.parent.parent
@@ -87,3 +90,34 @@ def normalize_geography(extracted_loc: str) -> GeoResult:
         return {"location": KNOWN_ZONES[norm], "zone": extracted_loc}
 
     return {"location": extracted_loc, "zone": None}
+
+
+def canonical_location(s: str | None) -> str | None:
+    """Return the canonical (lowercase, accent-stripped) form of a city name.
+
+    Resolves the input against the DANE municipality list and KNOWN_ZONES so
+    every consumer (requirements, scraper URL builder, evaluator) compares the
+    same string. Returns ``None`` only for genuinely empty input — unknown
+    cities fall through with a warning so URL building and substring matching
+    still work.
+    """
+    if not isinstance(s, str) or not s.strip():
+        return None
+    norm = _normalize(s)
+    if norm in _municipality_set():
+        return norm
+    if norm in KNOWN_ZONES:
+        return KNOWN_ZONES[norm]
+    logger.warning("canonical_location: %r not in DANE list or KNOWN_ZONES", s)
+    return norm
+
+
+def canonical_zone(s: str | None) -> str | None:
+    """Return the canonical (lowercase, accent-stripped) form of a zone string.
+
+    Zones aren't in the DANE list, so this is just :func:`_normalize`. Returns
+    ``None`` for empty input.
+    """
+    if not isinstance(s, str) or not s.strip():
+        return None
+    return _normalize(s)

@@ -18,7 +18,7 @@ import logging
 import sys
 
 from src.state import Constraint, PropertyFinderState, StructuredRequirements
-from src.agents.properties_agent import properties_node
+from src.agents.properties_agent import _extract_params, properties_node
 
 
 def main() -> int:
@@ -83,6 +83,79 @@ def main() -> int:
             file=sys.stderr,
         )
     return 0
+
+
+def test_extract_params_canonicalizes_location() -> None:
+    """Accents and case in user input must not leak into URL params."""
+    requirements = StructuredRequirements(
+        constraints=[
+            Constraint(
+                field="location",
+                exact_value="BogotÁ ",
+                constraint_type="hard",
+                importance="critical",
+            ),
+        ],
+        summary="",
+    )
+    url_params, _ = _extract_params(requirements)
+    assert url_params["location"] == "bogota"
+
+
+def test_extract_params_resolves_known_zone_to_parent_city() -> None:
+    """A 'location' string that's actually a neighborhood resolves to the city."""
+    requirements = StructuredRequirements(
+        constraints=[
+            Constraint(
+                field="location",
+                exact_value="Chapinero",
+                constraint_type="hard",
+                importance="critical",
+            ),
+        ],
+        summary="",
+    )
+    url_params, _ = _extract_params(requirements)
+    assert url_params["location"] == "bogota"
+
+
+def test_extract_params_skips_soft_zone() -> None:
+    """A soft zone constraint must not narrow the search URL."""
+    requirements = StructuredRequirements(
+        constraints=[
+            Constraint(
+                field="location",
+                exact_value="bogota",
+                constraint_type="hard",
+                importance="critical",
+            ),
+            Constraint(
+                field="zone",
+                exact_value="chapinero",
+                constraint_type="soft",
+                importance="nice_to_have",
+            ),
+        ],
+        summary="",
+    )
+    url_params, _ = _extract_params(requirements)
+    assert "zone" not in url_params, url_params
+
+
+def test_extract_params_keeps_hard_zone() -> None:
+    requirements = StructuredRequirements(
+        constraints=[
+            Constraint(
+                field="zone",
+                exact_value="Chapinero",
+                constraint_type="hard",
+                importance="critical",
+            ),
+        ],
+        summary="",
+    )
+    url_params, _ = _extract_params(requirements)
+    assert url_params["zone"] == "chapinero"
 
 
 if __name__ == "__main__":

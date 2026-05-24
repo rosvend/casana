@@ -30,7 +30,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from src.state import Constraint, PropertyFinderState, StructuredRequirements
-from src.utils.geography import normalize_geography
+from src.utils.geography import canonical_location, canonical_zone, normalize_geography
 
 
 load_dotenv()
@@ -118,23 +118,48 @@ def _apply_geo_normalization(requirements: StructuredRequirements) -> None:
     Mutates ``requirements.constraints`` in place. If a ``zone`` constraint
     already exists (the LLM did the split itself), only the location side is
     rewritten — we never append a duplicate zone.
+
+    Every location/zone string that leaves this function is canonical
+    (lowercase, accent-stripped, validated against the DANE list) so every
+    downstream consumer can compare them by simple equality.
     """
     constraints = requirements.constraints
     loc_constraint = next((c for c in constraints if c.field == "location"), None)
     if loc_constraint is None or not isinstance(loc_constraint.exact_value, str):
+        # Still canonicalize any pre-existing zone constraint emitted by the LLM.
+        for c in constraints:
+            if c.field == "zone" and isinstance(c.exact_value, str):
+                canon = canonical_zone(c.exact_value)
+                if canon:
+                    c.exact_value = canon
         return
 
     result = normalize_geography(loc_constraint.exact_value)
+    canon_location = canonical_location(result["location"]) or canonical_location(
+        loc_constraint.exact_value
+    )
+    if canon_location:
+        loc_constraint.exact_value = canon_location
+
+    # Canonicalize a pre-existing zone constraint regardless of whether the
+    # location string itself triggered a split.
+    for c in constraints:
+        if c.field == "zone" and isinstance(c.exact_value, str):
+            canon = canonical_zone(c.exact_value)
+            if canon:
+                c.exact_value = canon
+
     if result["zone"] is None:
         return
 
-    loc_constraint.exact_value = result["location"]
-
     if any(c.field == "zone" for c in constraints):
+        return
+    canon_zone = canonical_zone(result["zone"])
+    if not canon_zone:
         return
     constraints.append(Constraint(
         field="zone",
-        exact_value=result["zone"],
+        exact_value=canon_zone,
         constraint_type="hard",
         importance="critical",
     ))
