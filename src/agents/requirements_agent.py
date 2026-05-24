@@ -29,7 +29,8 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from src.state import PropertyFinderState, StructuredRequirements
+from src.state import Constraint, PropertyFinderState, StructuredRequirements
+from src.utils.geography import normalize_geography
 
 
 load_dotenv()
@@ -111,6 +112,34 @@ CUANDO is_complete=True, llena extracted_requirements:
 """
 
 
+def _apply_geo_normalization(requirements: StructuredRequirements) -> None:
+    """Split a sub-municipal ``location`` into (``location=parent_city``, ``zone=...``).
+
+    Mutates ``requirements.constraints`` in place. If a ``zone`` constraint
+    already exists (the LLM did the split itself), only the location side is
+    rewritten — we never append a duplicate zone.
+    """
+    constraints = requirements.constraints
+    loc_constraint = next((c for c in constraints if c.field == "location"), None)
+    if loc_constraint is None or not isinstance(loc_constraint.exact_value, str):
+        return
+
+    result = normalize_geography(loc_constraint.exact_value)
+    if result["zone"] is None:
+        return
+
+    loc_constraint.exact_value = result["location"]
+
+    if any(c.field == "zone" for c in constraints):
+        return
+    constraints.append(Constraint(
+        field="zone",
+        exact_value=result["zone"],
+        constraint_type="hard",
+        importance="critical",
+    ))
+
+
 def _normalize_weights(weights: dict[str, float]) -> dict[str, float]:
     """Rescale ``weights`` so the values sum to exactly 1.0.
 
@@ -156,6 +185,7 @@ def requirements_node(state: PropertyFinderState) -> dict:
     if result.is_complete and result.extracted_requirements is not None:
         requirements = result.extracted_requirements
         requirements.priority_weights = _normalize_weights(requirements.priority_weights)
+        _apply_geo_normalization(requirements)
         logger.info(
             "requirements_node: extracted %d constraint(s), weights=%s",
             len(requirements.constraints), requirements.priority_weights,

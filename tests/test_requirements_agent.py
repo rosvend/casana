@@ -15,6 +15,7 @@ maps Spanish constraints to the canonical English schema, and emits
 
 from __future__ import annotations
 
+import os
 import sys
 
 from src.agents.requirements_agent import requirements_node
@@ -134,6 +135,49 @@ def test_complete_request_with_weights() -> bool:
     return passed
 
 
+def _scenario_zone_only_splits_to_city_and_zone() -> bool:
+    """A query that only names a neighborhood must yield BOTH a `location`
+    constraint (the parent city) AND a separate `zone` constraint."""
+    state: PropertyFinderState = {
+        "user_query": (
+            "Busco apartamento en arriendo en Chapinero, 2 habitaciones, "
+            "presupuesto 2 millones, prioridad seguridad."
+        )
+    }
+    result = requirements_node(state)
+
+    requirements = result.get("requirements")
+    if not isinstance(requirements, StructuredRequirements):
+        return _check("zone-split: requirements is StructuredRequirements", False,
+                      f"got {type(requirements).__name__}")
+
+    loc = _find_constraint(requirements, "location")
+    zone = _find_constraint(requirements, "zone")
+
+    passed = _check(
+        "zone-split: location constraint resolves to Bogotá",
+        loc is not None
+        and isinstance(loc.exact_value, str)
+        and "bogota" in loc.exact_value.lower(),
+        f"got {loc.model_dump(exclude_none=True) if loc else None}",
+    )
+    passed &= _check(
+        "zone-split: zone constraint mentions Chapinero",
+        zone is not None
+        and isinstance(zone.exact_value, str)
+        and "chapinero" in zone.exact_value.lower(),
+        f"got {zone.model_dump(exclude_none=True) if zone else None}",
+    )
+    passed &= _check(
+        "zone-split: both constraints are hard",
+        loc is not None
+        and zone is not None
+        and loc.constraint_type == "hard"
+        and zone.constraint_type == "hard",
+    )
+    return passed
+
+
 def main() -> int:
     print("=== requirements_node ===")
     ok = True
@@ -141,8 +185,18 @@ def main() -> int:
     ok &= test_incomplete_request()
     print("\ntest_complete_request_with_weights:")
     ok &= test_complete_request_with_weights()
+    print("\ntest_zone_only_splits_to_city_and_zone:")
+    ok &= _scenario_zone_only_splits_to_city_and_zone()
     print(f"\n{'ALL TESTS PASSED' if ok else 'SOME TESTS FAILED'}")
     return 0 if ok else 1
+
+
+def test_zone_only_splits_to_city_and_zone() -> None:
+    if not os.getenv("OPENAI_API_KEY"):
+        import pytest
+
+        pytest.skip("OPENAI_API_KEY not set")
+    assert _scenario_zone_only_splits_to_city_and_zone()
 
 
 if __name__ == "__main__":
