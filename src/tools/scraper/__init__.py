@@ -25,6 +25,8 @@ Run the package directly to exercise the full pipeline against live sites:
 from __future__ import annotations
 
 import logging
+import random
+import time
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 
@@ -44,7 +46,13 @@ from src.tools.scraper.core import (
 
 logger = logging.getLogger(__name__)
 
-MAX_LISTINGS_PER_SOURCE = 10
+#: Per-page intake cap. Aggregate per-portal ceiling is implicitly
+#: ``MAX_PAGES * MAX_LISTINGS_PER_PAGE``.
+MAX_LISTINGS_PER_PAGE = 10
+#: Number of result pages each portal is walked through before discovery
+#: gives up. Each subsequent page incurs one stealthy fetch plus jitter, so
+#: total discovery latency scales roughly linearly with this value.
+MAX_PAGES = 3
 
 
 def _discover_one(
@@ -55,48 +63,70 @@ def _discover_one(
     filters: dict[str, int],
     zone: str | None = None,
 ) -> list[dict]:
-    """Run one portal's discovery pass: build URL, fetch, shallow-parse cards."""
+    """Run one portal's discovery pass across up to ``MAX_PAGES`` result pages.
+
+    Walks pages 1..N, accumulating up to ``MAX_LISTINGS_PER_PAGE`` new stubs
+    per page into a single deduplicated list. Stops early when the portal
+    signals it has no further pages (``build_search_url`` returns ``None``),
+    the fetch fails, or a page yields zero new stubs. A randomized 1.5–3 s
+    sleep between pages reduces the per-portal request-rate signature.
+    """
     name = adapter.name
     slug = adapter.type_slug(property_type)
-    url = _safe(
-        adapter.build_search_url, slug, transaction, location, filters,
-        default=None, zone=zone,
-    )
-    if not url:
-        logger.warning("[%s] url builder failed — skipping", name)
-        return []
-    logger.info("[%s] discovering: %s", name, url)
-
-    try:
-        page = _fetch_page(url)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("[%s] fetch failed: %s", name, e)
-        return []
-
-    status = getattr(page, "status", None)
-    if isinstance(status, int) and status >= 400:
-        logger.warning("[%s] HTTP %s — skipping", name, status)
-        return []
-
-    try:
-        cards = page.css(adapter.card_selector)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("[%s] selector %r failed: %s", name, adapter.card_selector, e)
-        return []
-    logger.info("[%s] %d card(s) matched", name, len(cards))
-
     out: list[dict] = []
     seen_urls: set[str] = set()
-    for card in cards:
-        if len(out) >= MAX_LISTINGS_PER_SOURCE:
+
+    for page in range(1, MAX_PAGES + 1):
+        url = _safe(
+            adapter.build_search_url, slug, transaction, location, filters,
+            default=None, zone=zone, page=page,
+        )
+        if not url:
+            logger.info("[%s] no URL for page %d — stopping pagination",
+                        name, page)
             break
-        rec = _safe(adapter.parse_card, card, url)
-        if not rec or rec["url"] in seen_urls:
-            continue
-        if not _passes_filters(rec, filters):
-            continue
-        seen_urls.add(rec["url"])
-        out.append(rec)
+        logger.info("[%s] discovering (page %d): %s", name, page, url)
+
+        try:
+            fetched = _fetch_page(url)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[%s] page %d fetch failed: %s", name, page, e)
+            break
+
+        status = getattr(fetched, "status", None)
+        if isinstance(status, int) and status >= 400:
+            logger.warning("[%s] page %d HTTP %s — stopping", name, page, status)
+            break
+
+        try:
+            cards = fetched.css(adapter.card_selector)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[%s] page %d selector %r failed: %s",
+                           name, page, adapter.card_selector, e)
+            break
+        logger.info("[%s] page %d: %d card(s) matched", name, page, len(cards))
+
+        page_added = 0
+        for card in cards:
+            if page_added >= MAX_LISTINGS_PER_PAGE:
+                break
+            rec = _safe(adapter.parse_card, card, url)
+            if not rec or rec["url"] in seen_urls:
+                continue
+            if not _passes_filters(rec, filters):
+                continue
+            seen_urls.add(rec["url"])
+            out.append(rec)
+            page_added += 1
+
+        if page_added == 0:
+            logger.info("[%s] page %d yielded 0 new stubs — end of results",
+                        name, page)
+            break
+
+        if page < MAX_PAGES:
+            time.sleep(random.uniform(1.5, 3.0))
+
     return out
 
 

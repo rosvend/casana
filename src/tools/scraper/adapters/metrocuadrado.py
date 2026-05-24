@@ -96,7 +96,8 @@ class MetroCuadradoAdapter(PortalAdapter):
         location: str,
         filters: dict[str, int],
         zone: str | None = None,
-    ) -> str:
+        page: int = 1,
+    ) -> str | None:
         """Metro Cuadrado packs all filters into a single hyphen-joined slug
         segment and requires the ``?search=form`` suffix to parse it. Prices are
         expressed in *millions* (integer), not raw COP. Ranges work for price
@@ -104,7 +105,18 @@ class MetroCuadradoAdapter(PortalAdapter):
 
         Zone slot: live-verified to sit *after* the city, e.g.
         ``/apartamento/arriendo/bogota/chapinero/``.
+
+        Pagination: live recon confirmed MC has no URL-routable pagination
+        (results render via a JS-driven ``rc-pagination`` widget that hits
+        ``/rest-search/search?from=N`` via XHR; query params like ``?p=2``,
+        ``?page=2`` and ``?pagina=2`` all silently render page 1). The MC
+        page already returns ~50 cards on first load — well above our
+        per-page cap — so a single fetch is enough. Return ``None`` for
+        ``page > 1`` to signal "no further pages reachable" and let the
+        orchestrator stop iterating.
         """
+        if page > 1:
+            return None
         z = _zone_slug(zone)
         if z:
             base = f"https://www.metrocuadrado.com/{slug}/{transaction}/{location}/{z}/"

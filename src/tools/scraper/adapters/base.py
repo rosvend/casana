@@ -57,13 +57,20 @@ class PortalAdapter(ABC):
         location: str,
         filters: dict[str, int],
         zone: str | None = None,
-    ) -> str:
+        page: int = 1,
+    ) -> str | None:
         """Build the portal's search-results URL for the given parameters.
 
         ``filters`` carries canonical, None-stripped, integer-valued keys
         (see :func:`src.tools.scraper.core._collect_filters`). ``zone`` is the
         optional sub-municipal slug (e.g. ``"chapinero"``); each adapter slots
         it into its own portal-specific position.
+
+        ``page`` is 1-indexed. Implementations must omit any pagination
+        segment when ``page == 1`` so existing URLs are unchanged for the
+        first page. Adapters whose portals lack URL-based pagination may
+        return ``None`` for ``page > 1`` to signal "no further pages
+        reachable" — the orchestrator stops iterating on a falsy URL.
         """
 
     @abstractmethod

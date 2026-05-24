@@ -140,15 +140,19 @@ class FincaRaizAdapter(PortalAdapter):
         location: str,
         filters: dict[str, int],
         zone: str | None = None,
+        page: int = 1,
     ) -> str:
         """Finca Raíz uses additive path slugs, one per segment. Order is stable
-        (price → rooms → bath → estrato → area → parking) so URLs are
-        deterministic and reproducible.
+        (price → rooms → bath → estrato → area → parking → pagination) so URLs
+        are deterministic and reproducible.
 
         Zone slot: live-verified to sit *before* the city, e.g.
         ``/arriendo/apartamentos/chapinero/bogota``. The portal normalizes
         loose neighborhood names via 301s (``chapinero`` → ``chapinero-alto``)
         so we just pass the user's slug through.
+
+        Pagination: ``/paginaN`` (no hyphen, no separator) goes last so it
+        doesn't disturb filter-slug ordering. ``page=1`` is omitted entirely.
         """
         z = _zone_slug(zone)
         if z:
@@ -173,6 +177,8 @@ class FincaRaizAdapter(PortalAdapter):
         if (v := filters.get("parking_lots")) is not None:
             parts.append(f"{v}-parqueaderos")
         # longevity has no stable FR slug — handled by the post-filter.
+        if page > 1:
+            parts.append(f"pagina{page}")
         if parts:
             return base + "/" + "/".join(parts)
         return base
