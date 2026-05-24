@@ -15,6 +15,7 @@ from src.agents.evaluator_agent import evaluator_node as evaluator_agent
 from src.agents.news_agent import news_node as news_agent
 from src.agents.properties_agent import properties_node as properties_agent
 from src.agents.requirements_agent import requirements_node as requirements_agent
+from src.agents.responder_agent import responder_node as responder_agent
 from src.agents.softener_agent import softener_node as softener_agent
 from src.agents.synthesizer_agent import synthesizer_node as synthesizer_agent
 from src.agents.whatsapp_agent import whatsapp_node as whatsapp_agent
@@ -27,4 +28,5 @@ __all__ = [
     "evaluator_agent",
     "softener_agent",
     "whatsapp_agent",
+    "responder_agent",
 ]

@@ -8,6 +8,7 @@ from src.agents import (
     synthesizer_agent,
     evaluator_agent,
     softener_agent,
+    responder_agent,
 )
 
 """Roles and responsibilities of each agent:
@@ -59,13 +60,17 @@ def route_requirements(state: PropertyFinderState) -> list[str]:
 
 
 def route_evaluation(state: PropertyFinderState) -> str:
-    """After evaluation: deliver via WhatsApp, soften and retry, or give up."""
+    """After evaluation: deliver via WhatsApp, soften and retry, or give up.
+
+    Both terminal outcomes (success → whatsapp → responder, give-up → responder)
+    converge through ``responder_agent`` before ``END``.
+    """
     evaluation = state["evaluation"]
     if evaluation.passes:
         return "whatsapp_agent"
     if state.get("softening_attempts", 0) < MAX_SOFTENING_ATTEMPTS:
         return "softener_agent"
-    return END
+    return "responder_agent"
 
 
 def build_graph():
@@ -78,6 +83,7 @@ def build_graph():
     graph.add_node("evaluator_agent", evaluator_agent)
     graph.add_node("softener_agent", softener_agent)
     graph.add_node("whatsapp_agent", whatsapp_agent)
+    graph.add_node("responder_agent", responder_agent)
 
     graph.set_entry_point("requirements_agent")
 
@@ -98,7 +104,7 @@ def build_graph():
         {
             "whatsapp_agent": "whatsapp_agent",
             "softener_agent": "softener_agent",
-            END: END,
+            "responder_agent": "responder_agent",
         },
     )
 
@@ -108,6 +114,7 @@ def build_graph():
         ["properties_agent", "news_agent"],
     )
 
-    graph.add_edge("whatsapp_agent", END)
+    graph.add_edge("whatsapp_agent", "responder_agent")
+    graph.add_edge("responder_agent", END)
 
     return graph.compile()
