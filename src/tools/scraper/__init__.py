@@ -53,13 +53,14 @@ def _discover_one(
     property_type: str,
     transaction: str,
     filters: dict[str, int],
+    zone: str | None = None,
 ) -> list[dict]:
     """Run one portal's discovery pass: build URL, fetch, shallow-parse cards."""
     name = adapter.name
     slug = adapter.type_slug(property_type)
     url = _safe(
         adapter.build_search_url, slug, transaction, location, filters,
-        default=None,
+        default=None, zone=zone,
     )
     if not url:
         logger.warning("[%s] url builder failed — skipping", name)
@@ -104,6 +105,7 @@ def search_listings(
     location: str = "medellin",
     property_type: str = "apartamentos",
     transaction: str = "arriendo",
+    zone: str | None = None,
     min_price: int | None = None,
     max_price: int | None = None,
     bedrooms: int | None = None,
@@ -136,6 +138,9 @@ def search_listings(
         property_type: One of ``"apartamentos"``, ``"casas"``, ``"locales"``,
             ``"oficinas"``, ``"fincas"``. Unknown values fall back to apartamentos.
         transaction: ``"arriendo"`` (rent) or ``"venta"`` (sale).
+        zone: Optional sub-municipal slug, e.g. ``"chapinero"``. When set, each
+            portal slots it into its own URL position (Finca Raíz: before the
+            city; Metro Cuadrado: after the city).
         min_price: Minimum asking price in COP.
         max_price: Maximum asking price in COP.
         bedrooms: Exact bedroom count.
@@ -172,7 +177,7 @@ def search_listings(
     with ThreadPoolExecutor(max_workers=len(ADAPTERS)) as executor:
         per_adapter = list(executor.map(
             lambda adapter: _discover_one(
-                adapter, location, property_type, transaction, filters
+                adapter, location, property_type, transaction, filters, zone=zone
             ),
             ADAPTERS,
         ))

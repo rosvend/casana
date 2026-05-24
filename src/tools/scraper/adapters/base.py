@@ -51,12 +51,19 @@ class PortalAdapter(ABC):
 
     @abstractmethod
     def build_search_url(
-        self, slug: str, transaction: str, location: str, filters: dict[str, int]
+        self,
+        slug: str,
+        transaction: str,
+        location: str,
+        filters: dict[str, int],
+        zone: str | None = None,
     ) -> str:
         """Build the portal's search-results URL for the given parameters.
 
         ``filters`` carries canonical, None-stripped, integer-valued keys
-        (see :func:`src.tools.scraper.core._collect_filters`).
+        (see :func:`src.tools.scraper.core._collect_filters`). ``zone`` is the
+        optional sub-municipal slug (e.g. ``"chapinero"``); each adapter slots
+        it into its own portal-specific position.
         """
 
     @abstractmethod
