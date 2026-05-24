@@ -200,7 +200,7 @@ def _scenario_low_score_not_contacted() -> bool:
         notes = getattr(low.listing, "verification_notes", "") or ""
         ok &= _check(
             "low-score candidate notes mention score / threshold",
-            "score" in notes.lower() or "0.7" in notes,
+            "score" in notes.lower() or "0.4" in notes,
             f"notes={notes!r}",
         )
     return ok
@@ -225,7 +225,11 @@ def _scenario_reply_detected_marks_confirmed() -> bool:
     with _evolution_env(), \
          patch("src.agents.whatsapp_agent.requests.post") as mock_post, \
          patch("src.agents.whatsapp_agent.time.sleep"), \
-         patch("src.agents.whatsapp_agent.random.uniform", return_value=5.5):
+         patch("src.agents.whatsapp_agent.random.uniform", return_value=5.5), \
+         patch(
+             "src.agents.whatsapp_agent._is_reply_confirming_availability",
+             return_value=True,
+         ) as mock_llm_check:
         mock_post.side_effect = _post_router(poll_responses=poll_sequence)
 
         out = whatsapp_node(state)
@@ -261,6 +265,17 @@ def _scenario_reply_detected_marks_confirmed() -> bool:
         "B's poll stopped early (≤2 polls used for B before short-circuit)",
         _count_poll_calls(mock_post) <= 6 + 2 + 6,
         f"got {_count_poll_calls(mock_post)}",
+    )
+    ok &= _check(
+        "LLM availability check ran exactly once (only B got a reply)",
+        mock_llm_check.call_count == 1,
+        f"got {mock_llm_check.call_count}",
+    )
+    ok &= _check(
+        "LLM availability check received the reply text",
+        mock_llm_check.call_args is not None
+        and "disponible" in (mock_llm_check.call_args.args[0] or "").lower(),
+        f"args={mock_llm_check.call_args}",
     )
     return ok
 
