@@ -46,10 +46,20 @@ class Constraint(BaseModel):
         default=None, description="Inclusive upper bound for range constraints."
     )
     constraint_type: ConstraintType = Field(
-        ..., description="'hard' gates the candidate; 'soft' only affects the score."
+        default="hard",
+        description=(
+            "'hard' gates the candidate; 'soft' only affects the score. "
+            "Defaults to 'hard': a user-stated requirement is gating unless "
+            "the LLM marks it otherwise."
+        ),
     )
     importance: Importance = Field(
-        ..., description="Importance label; weight mapping lives outside the state."
+        default="important",
+        description=(
+            "Importance label; weight mapping lives outside the state. "
+            "Defaults to 'important' so an LLM extraction that omits the "
+            "label still validates."
+        ),
     )
 
 
