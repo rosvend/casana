@@ -39,8 +39,13 @@ _TRANSACTION_MAP: dict[str, str] = {
 
 
 def _fetch_page(url: str):
-    """Stealthy fetch with Cloudflare bypass. Lazy import so the missing-binary
-    error only fires when scraping is actually attempted."""
+    """Stealthy fetch. Lazy import so the missing-binary error only fires when
+    scraping is actually attempted.
+
+    ``solve_cloudflare`` is disabled because the target portals (Finca Raíz,
+    Metro Cuadrado) don't gate behind Turnstile; leaving it on caused 60-90 s
+    of wasted retries per fetch hunting for a challenge that never appears.
+    """
     try:
         from scrapling.fetchers import StealthyFetcher
     except ImportError as e:
@@ -51,7 +56,7 @@ def _fetch_page(url: str):
         url,
         headless=True,
         network_idle=True,
-        solve_cloudflare=True,
+        solve_cloudflare=False,
         timeout=90_000,
     )
 
