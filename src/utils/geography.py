@@ -69,9 +69,19 @@ class GeoResult(TypedDict):
 
 
 def _normalize(text: str) -> str:
-    """Lowercase, strip whitespace and combining accents — used only for matching."""
+    """Lowercase, strip accents, and collapse compound separators to spaces.
+
+    The LLM occasionally emits a compound location like ``"chapinero_bogota"``
+    or ``"chapinero,bogota"`` instead of two separate constraints. Mapping
+    ``[_/,]`` to space lets the existing token-boundary matcher in
+    :func:`_find_known_zone_substring` recover the (zone, parent_city) split
+    without a separate code path. The token-boundary regex uses ``\\w`` which
+    treats ``_`` as a word character, so leaving ``_`` in place would silently
+    block the match.
+    """
     nfkd = unicodedata.normalize("NFKD", text.strip().lower())
-    return "".join(c for c in nfkd if not unicodedata.combining(c))
+    cleaned = "".join(c for c in nfkd if not unicodedata.combining(c))
+    return re.sub(r"[_/,]", " ", cleaned)
 
 
 # Strips a trailing administrative-division suffix like ", D.C." from a

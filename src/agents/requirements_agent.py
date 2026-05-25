@@ -127,6 +127,31 @@ CUANDO is_complete=True, llena extracted_requirements:
     "soft" si solo afecta el puntaje.
   * importance: "critical", "important" o "nice_to_have" según el énfasis del
     usuario.
+
+UBICACIÓN VS. ZONA — REGLA CRÍTICA:
+- location es SIEMPRE una ciudad o municipio colombiano (Bogotá, Medellín,
+  Cali, Barranquilla, Bucaramanga, Cartagena, etc.).
+- zone es un barrio, comuna o UPZ dentro de esa ciudad (Chapinero, Usaquén,
+  El Poblado, Laureles, Bocagrande…).
+- NUNCA combines ciudad y barrio en un solo string. NUNCA uses guiones bajos
+  ni comas para unirlos en un mismo valor.
+
+Ejemplos correctos:
+  Usuario: "Busco apto en Chapinero, Bogotá, 3M arriendo"
+    → constraints incluye DOS entradas separadas:
+       { field: "location", exact_value: "bogota", constraint_type: "hard" }
+       { field: "zone",     exact_value: "chapinero", constraint_type: "hard" }
+  Usuario: "Apartamento en El Poblado de Medellín, venta hasta 500M"
+    → { field: "location", exact_value: "medellin" }
+       { field: "zone",     exact_value: "el poblado" }
+       { field: "transaction_type", exact_value: "sale" }
+       { field: "price", max_value: 500000000 }
+
+Ejemplos INCORRECTOS (NO HAGAS ESTO):
+  ✗ location="chapinero_bogota"     ← NUNCA unas con _
+  ✗ location="chapinero, bogota"    ← NUNCA unas con coma
+  ✗ location="chapinero"            ← Chapinero es zona, no ciudad
+  ✗ zone="bogota"                   ← Bogotá es ciudad, no zona
 - summary: un resumen de una línea, en español, del brief.
 - priority_weights: pesos macro sobre los ejes 'price', 'location' y
   'security'. DEBEN sumar exactamente 1.0. Usa siempre las llaves en inglés

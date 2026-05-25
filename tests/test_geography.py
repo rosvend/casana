@@ -107,3 +107,37 @@ def test_canonical_zone_lowercases_and_strips_accents():
 def test_canonical_zone_empty_returns_none():
     assert canonical_zone("") is None
     assert canonical_zone(None) is None
+
+
+# Regression tests for compound location strings emitted by the LLM
+# (e.g. "chapinero_bogota"). _normalize maps [_/,] to space so the
+# token-boundary matcher in _find_known_zone_substring can recover the
+# (zone, parent_city) split. See src/utils/geography.py::_normalize.
+
+
+def test_compound_underscore_resolves_to_parent_city():
+    result = normalize_geography("chapinero_bogota")
+    assert result["location"] == "bogota"
+    assert result["zone"] == "chapinero"
+
+
+def test_compound_comma_resolves_to_parent_city():
+    result = normalize_geography("chapinero, bogota")
+    assert result["location"] == "bogota"
+    assert result["zone"] == "chapinero"
+
+
+def test_compound_slash_resolves_to_parent_city():
+    result = normalize_geography("bogota/chapinero")
+    assert result["location"] == "bogota"
+    assert result["zone"] == "chapinero"
+
+
+def test_compound_underscore_canonical_location():
+    assert canonical_location("chapinero_bogota") == "bogota"
+
+
+def test_compound_underscore_with_accents():
+    result = normalize_geography("El Poblado_Medellín")
+    assert result["location"] == "medellin"
+    assert result["zone"] == "el poblado"
