@@ -1,5 +1,25 @@
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import START, END, StateGraph
 from src.state import PropertyFinderState
+
+
+# Pydantic state classes carried in the checkpoint. Listed explicitly so the
+# msgpack deserializer doesn't print an "unregistered type" warning per class
+# and we stay forward-compatible with LANGGRAPH_STRICT_MSGPACK becoming the
+# default.
+_ALLOWED_STATE_MODULES: list[tuple[str, str]] = [
+    ("src.state.evaluation", "CandidateScore"),
+    ("src.state.evaluation", "EvaluationResult"),
+    ("src.state.evaluation", "FailureReason"),
+    ("src.state.listings", "Candidate"),
+    ("src.state.listings", "Listing"),
+    ("src.state.listings", "VerifiedListing"),
+    ("src.state.news", "NewsItem"),
+    ("src.state.requirements", "Constraint"),
+    ("src.state.requirements", "StructuredRequirements"),
+    ("src.state.softening", "SofteningAttempt"),
+]
 from src.agents import (
     requirements_agent,
     properties_agent,
@@ -55,7 +75,25 @@ MAX_SOFTENING_ATTEMPTS = 3
 
 
 def route_requirements(state: PropertyFinderState) -> list[str]:
-    """Fan out to the two parallel branches. Deterministic for MVP."""
+    """Fan out to the scrape branches, or short-circuit out of the graph.
+
+    Three bypasses, checked in order:
+
+    - ``is_property_search`` False  → ``responder_agent`` produces a brief
+      chit-chat reply (greeting / thanks / goodbye).
+    - ``requirements_complete`` False → END. requirements_agent has already
+      appended its clarification question to ``chat_history``; the CLI
+      prints the last assistant turn, so no further node needs to run.
+    - otherwise → fan out to ``properties_agent`` + ``news_agent``.
+
+    The softener_agent reuses this router for its retry pass — softening
+    only fires after a complete property search, so both bypass conditions
+    are False there and the scrape fan-out wins.
+    """
+    if state.get("is_property_search") is False:
+        return ["responder_agent"]
+    if state.get("requirements_complete") is False:
+        return [END]
     return ["properties_agent", "news_agent"]
 
 
@@ -90,7 +128,7 @@ def build_graph():
     graph.add_conditional_edges(
         "requirements_agent",
         route_requirements,
-        ["properties_agent", "news_agent"],
+        ["properties_agent", "news_agent", "responder_agent", END],
     )
 
     graph.add_edge("properties_agent", "synthesizer_agent")
@@ -117,4 +155,6 @@ def build_graph():
     graph.add_edge("whatsapp_agent", "responder_agent")
     graph.add_edge("responder_agent", END)
 
-    return graph.compile()
+    serde = JsonPlusSerializer(allowed_msgpack_modules=_ALLOWED_STATE_MODULES)
+    memory = MemorySaver(serde=serde)
+    return graph.compile(checkpointer=memory)

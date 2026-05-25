@@ -30,7 +30,12 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from src.state import Constraint, PropertyFinderState, StructuredRequirements
-from src.utils.geography import canonical_location, canonical_zone, normalize_geography
+from src.utils.geography import (
+    KNOWN_ZONES,
+    canonical_location,
+    canonical_zone,
+    normalize_geography,
+)
 
 
 load_dotenv()
@@ -50,6 +55,15 @@ class RequirementsExtraction(BaseModel):
     meaningful, selected by ``is_complete``.
     """
 
+    is_property_search: bool = Field(
+        default=True,
+        description=(
+            "True if the user is asking to search for properties or update "
+            "search filters. False if the user is just saying thanks, hello, "
+            "goodbye, or otherwise making small talk that doesn't change the "
+            "search."
+        ),
+    )
     is_complete: bool = Field(
         ...,
         description=(
@@ -74,6 +88,14 @@ SYSTEM_PROMPT = """\
 Eres un asistente inmobiliario colombiano, amable y cercano. Tu trabajo es
 convertir la solicitud del usuario en un brief estructurado para un motor de
 búsqueda de propiedades.
+
+DECIDE PRIMERO SI ES UNA BÚSQUEDA (is_property_search):
+- True cuando el usuario pide buscar propiedades, modificar filtros, o aclarar
+  algo sobre su búsqueda activa.
+- False cuando el usuario solo saluda, agradece, se despide o hace charla
+  casual ("hola", "gracias", "ok perfecto", "chao", "ya no", "no, así está
+  bien"). En este caso NO llenes extracted_requirements y deja is_complete
+  como estaba; la pregunta de clarificación tampoco aplica.
 
 DECIDE SI HAY SUFICIENTE INFORMACIÓN (is_complete):
 - Marca is_complete=True solo si la solicitud tiene, como mínimo, una UBICACIÓN
@@ -112,19 +134,35 @@ CUANDO is_complete=True, llena extracted_requirements:
 """
 
 
-def _apply_geo_normalization(requirements: StructuredRequirements) -> None:
-    """Split a sub-municipal ``location`` into (``location=parent_city``, ``zone=...``).
+def _apply_geo_normalization(requirements: StructuredRequirements) -> bool:
+    """Normalize / split / synthesize the location and zone constraints.
 
-    Mutates ``requirements.constraints`` in place. If a ``zone`` constraint
-    already exists (the LLM did the split itself), only the location side is
-    rewritten — we never append a duplicate zone.
+    Mutates ``requirements.constraints`` in place and returns whether the
+    geography is usable downstream:
 
-    Every location/zone string that leaves this function is canonical
-    (lowercase, accent-stripped, validated against the DANE list) so every
-    downstream consumer can compare them by simple equality.
+    - ``True``  — the brief either has a canonical location, or no location
+      at all and we couldn't infer one (caller decides what to do next).
+    - ``False`` — the LLM extracted a location string that we can't resolve
+      to a DANE municipality, a KNOWN_ZONES parent city, or a substring
+      match. The caller should ask the user for clarification rather than
+      run a scrape on garbage.
+
+    Behaviors:
+
+    - Sub-municipal ``location`` (e.g. ``"chapinero"`` or ``"laureles
+      medellin"``) is split into ``location=parent_city`` plus a synthesized
+      ``zone`` if the LLM didn't already supply one.
+    - If the LLM extracted only a ``zone`` that maps to a known parent city,
+      a hard ``location`` constraint is synthesized so the evaluator's
+      hard-constraint gate has something to reject wrong-city listings with.
+    - Every location/zone string that survives canonicalization is canonical
+      (lowercase, accent-stripped, validated against the DANE list) so every
+      downstream consumer can compare them by simple equality.
     """
     constraints = requirements.constraints
     loc_constraint = next((c for c in constraints if c.field == "location"), None)
+
+    # Branch A: no location constraint from the LLM.
     if loc_constraint is None or not isinstance(loc_constraint.exact_value, str):
         # Still canonicalize any pre-existing zone constraint emitted by the LLM.
         for c in constraints:
@@ -132,14 +170,44 @@ def _apply_geo_normalization(requirements: StructuredRequirements) -> None:
                 canon = canonical_zone(c.exact_value)
                 if canon:
                     c.exact_value = canon
-        return
+        # If a zone constraint matches a known parent city, synthesize the
+        # missing location so the evaluator can actually gate.
+        zone_constraint = next(
+            (
+                c
+                for c in constraints
+                if c.field == "zone" and isinstance(c.exact_value, str)
+            ),
+            None,
+        )
+        if zone_constraint is not None:
+            parent_city = KNOWN_ZONES.get(zone_constraint.exact_value)
+            if parent_city:
+                constraints.append(Constraint(
+                    field="location",
+                    exact_value=parent_city,
+                    constraint_type="hard",
+                    importance="critical",
+                ))
+                logger.info(
+                    "_apply_geo_normalization: synthesized location=%r from zone=%r",
+                    parent_city,
+                    zone_constraint.exact_value,
+                )
+        return True
 
+    # Branch B: the LLM gave us a location. Try to canonicalize it.
     result = normalize_geography(loc_constraint.exact_value)
     canon_location = canonical_location(result["location"]) or canonical_location(
         loc_constraint.exact_value
     )
-    if canon_location:
-        loc_constraint.exact_value = canon_location
+    if canon_location is None:
+        logger.warning(
+            "_apply_geo_normalization: could not canonicalize location=%r",
+            loc_constraint.exact_value,
+        )
+        return False
+    loc_constraint.exact_value = canon_location
 
     # Canonicalize a pre-existing zone constraint regardless of whether the
     # location string itself triggered a split.
@@ -150,19 +218,20 @@ def _apply_geo_normalization(requirements: StructuredRequirements) -> None:
                 c.exact_value = canon
 
     if result["zone"] is None:
-        return
+        return True
 
     if any(c.field == "zone" for c in constraints):
-        return
+        return True
     canon_zone = canonical_zone(result["zone"])
     if not canon_zone:
-        return
+        return True
     constraints.append(Constraint(
         field="zone",
         exact_value=canon_zone,
         constraint_type="hard",
         importance="critical",
     ))
+    return True
 
 
 def _normalize_weights(weights: dict[str, float]) -> dict[str, float]:
@@ -202,24 +271,86 @@ def requirements_node(state: PropertyFinderState) -> dict:
     messages.append(("human", user_query))
 
     result: RequirementsExtraction = structured_llm.invoke(messages)
-    logger.info("requirements_node: is_complete=%s", result.is_complete)
+    logger.info(
+        "requirements_node: is_property_search=%s is_complete=%s",
+        result.is_property_search,
+        result.is_complete,
+    )
 
     # The user's turn is always recorded; chat_history uses an `add` reducer.
     chat_history: list[dict[str, str]] = [{"role": "user", "content": user_query}]
 
+    if not result.is_property_search:
+        # Chit-chat / greeting / thanks — route straight to responder. The
+        # responder handles the assistant turn so we don't pre-write one here.
+        return {
+            "chat_history": chat_history,
+            "is_property_search": False,
+        }
+
     if result.is_complete and result.extracted_requirements is not None:
         requirements = result.extracted_requirements
         requirements.priority_weights = _normalize_weights(requirements.priority_weights)
-        _apply_geo_normalization(requirements)
+        geo_ok = _apply_geo_normalization(requirements)
+        if not geo_ok:
+            # The LLM extracted a location we can't resolve. Don't run the
+            # scrape on garbage — flip back to clarification mode with a
+            # deterministic question (no extra LLM call needed).
+            bad_loc = next(
+                (
+                    c.exact_value
+                    for c in requirements.constraints
+                    if c.field == "location" and isinstance(c.exact_value, str)
+                ),
+                None,
+            )
+            question = (
+                f"No reconocí '{bad_loc}' como una ciudad colombiana. "
+                "¿Podrías indicarme exactamente en qué ciudad quieres buscar? "
+                "Por ejemplo: Medellín, Bogotá, Cali, Barranquilla, Bucaramanga…"
+                if bad_loc
+                else (
+                    "¿En qué ciudad colombiana quieres buscar? Por ejemplo: "
+                    "Medellín, Bogotá, Cali, Barranquilla…"
+                )
+            )
+            chat_history.append({"role": "assistant", "content": question})
+            logger.info(
+                "requirements_node: location %r couldn't be canonicalized — clarifying",
+                bad_loc,
+            )
+            return {
+                "chat_history": chat_history,
+                "requirements_complete": False,
+                "is_property_search": True,
+                "requirements": None,
+                "clarification_question": question,
+            }
         logger.info(
             "requirements_node: extracted %d constraint(s), weights=%s",
             len(requirements.constraints), requirements.priority_weights,
         )
+        # Start of a new property search: wipe prior-turn results so stale
+        # candidates/evaluation from earlier turns in the same thread don't
+        # leak into the new run. ``chat_history`` is intentionally not
+        # reset — its ``add`` reducer keeps the multi-turn dialogue intact.
+        # ``softening_history`` also uses ``add`` and can't be reset from a
+        # node return; downstream consumers tolerate cross-search noise.
         return {
             "chat_history": chat_history,
             "requirements_complete": True,
+            "is_property_search": True,
             "requirements": requirements,
             "clarification_question": None,
+            "candidates": [],
+            "evaluation": None,
+            "softening_attempts": 0,
+            "raw_listings": [],
+            "verified_listings": [],
+            "news_results": {},
+            "final_results": [],
+            "is_best_effort": False,
+            "softening_summary": None,
         }
 
     # Incomplete — ask for more, and record the question for the next loop.
@@ -232,6 +363,7 @@ def requirements_node(state: PropertyFinderState) -> dict:
     return {
         "chat_history": chat_history,
         "requirements_complete": False,
+        "is_property_search": True,
         "requirements": None,
         "clarification_question": question,
     }

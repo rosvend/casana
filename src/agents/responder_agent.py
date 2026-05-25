@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from src.state import Candidate, EvaluationResult, PropertyFinderState
@@ -35,6 +35,13 @@ _SYSTEM_PROMPT = (
     "provistos. Sé conciso."
 )
 
+_CHITCHAT_SYSTEM_PROMPT = (
+    "Eres un asistente inmobiliario en Colombia. El usuario te está saludando, "
+    "agradeciéndote o despidiéndose, o solo conversando. Responde brevemente, "
+    "con amabilidad y en español colombiano. No menciones propiedades a menos "
+    "que el usuario lo pida explícitamente."
+)
+
 
 def responder_node(state: PropertyFinderState) -> dict:
     """Produce the final user-facing reply and append it to ``chat_history``.
@@ -43,7 +50,15 @@ def responder_node(state: PropertyFinderState) -> dict:
     state. Returns ``{"chat_history": [{"role": "assistant", "content": ...}]}``
     — a single-element list, which the ``add`` reducer on ``chat_history``
     appends to whatever history is already there.
+
+    When ``is_property_search`` is ``False`` (set by requirements_agent for
+    greetings / thanks / goodbyes) the node short-circuits to a brief
+    chit-chat reply, bypassing the candidate/evaluation summary entirely so
+    stale prior-turn candidates aren't re-served.
     """
+    if state.get("is_property_search") is False:
+        return _respond_chitchat(state.get("chat_history") or [])
+
     candidates: list[Candidate] = state.get("candidates") or []
     evaluation: EvaluationResult | None = state.get("evaluation")
     softening_attempts: int = state.get("softening_attempts", 0)
@@ -73,6 +88,25 @@ def responder_node(state: PropertyFinderState) -> dict:
         ]
     )
 
+    return {
+        "chat_history": [{"role": "assistant", "content": response.content}]
+    }
+
+
+def _respond_chitchat(history: list[dict[str, str]]) -> dict:
+    """Generate a brief friendly reply from ``chat_history`` alone."""
+    messages: list = [SystemMessage(content=_CHITCHAT_SYSTEM_PROMPT)]
+    for turn in history:
+        role = turn.get("role", "user")
+        content = turn.get("content", "")
+        if role == "assistant":
+            messages.append(AIMessage(content=content))
+        else:
+            messages.append(HumanMessage(content=content))
+
+    llm = ChatOpenAI(model=MODEL, temperature=0.3)
+    response = llm.invoke(messages)
+    logger.info("responder_node: chit-chat reply")
     return {
         "chat_history": [{"role": "assistant", "content": response.content}]
     }

@@ -61,6 +61,14 @@ class PropertyFinderState(TypedDict, total=False):
     """Gates `requirements_router` in graph.py. False → loop back to
     requirements_agent for more clarification; True → proceed to router_agent."""
 
+    is_property_search: bool
+    """Intent flag set by requirements_agent. True when the user is asking to
+    search for properties or update filters; False for greetings, thanks,
+    goodbyes, or off-topic chit-chat. Read by `route_requirements` to bypass
+    the scraper/synthesizer/evaluator chain and route straight to
+    responder_agent. Defaults to True (treated as property search) when
+    absent."""
+
     # 3. Routing decisions
     active_branches: list[str]
     """Which fan-out branches router_agent activated this iteration (e.g.

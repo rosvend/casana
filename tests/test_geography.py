@@ -80,12 +80,15 @@ def test_canonical_location_resolves_known_zone_to_parent_city():
     assert canonical_location("El Poblado") == "medellin"
 
 
-def test_canonical_location_unknown_falls_through_with_warning(caplog):
+def test_canonical_location_unknown_returns_none_with_warning(caplog):
     import logging
 
     with caplog.at_level(logging.WARNING, logger="src.utils.geography"):
         result = canonical_location("Atlantis")
-    assert result == "atlantis"
+    assert result is None, (
+        "Unknown locations must return None so callers can ask for "
+        "clarification or omit the location — not silently flow through."
+    )
     assert any("Atlantis" in record.message for record in caplog.records)
 
 

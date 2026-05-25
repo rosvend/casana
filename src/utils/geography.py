@@ -84,11 +84,25 @@ def _municipality_set() -> frozenset[str]:
     return frozenset(names)
 
 
+def _find_known_zone_substring(norm: str) -> tuple[str, str] | None:
+    """Token-boundary substring match for compound inputs like "laureles medellin".
+
+    Returns ``(zone, parent_city)`` for the longest KNOWN_ZONES key that appears
+    as a whole-token substring of ``norm``, or ``None``. Longest-first so
+    multi-word zones like "el poblado" win over "el".
+    """
+    for zone in sorted(KNOWN_ZONES, key=len, reverse=True):
+        if re.search(rf"(?<![\w]){re.escape(zone)}(?![\w])", norm):
+            return zone, KNOWN_ZONES[zone]
+    return None
+
+
 def normalize_geography(extracted_loc: str) -> GeoResult:
     """Return ``{"location": ..., "zone": ...}`` for an extracted place string.
 
     - Valid municipality           → ``{"location": input, "zone": None}``
     - Known sub-municipal zone     → ``{"location": parent_city, "zone": input}``
+    - Compound "zone city" string  → ``{"location": parent_city, "zone": zone}``
     - Anything else                → ``{"location": input, "zone": None}``
 
     The input casing is preserved on the way out so downstream lowercasing
@@ -105,6 +119,11 @@ def normalize_geography(extracted_loc: str) -> GeoResult:
     if norm in KNOWN_ZONES:
         return {"location": KNOWN_ZONES[norm], "zone": extracted_loc}
 
+    zone_hit = _find_known_zone_substring(norm)
+    if zone_hit is not None:
+        zone, city = zone_hit
+        return {"location": city, "zone": zone}
+
     return {"location": extracted_loc, "zone": None}
 
 
@@ -112,10 +131,13 @@ def canonical_location(s: str | None) -> str | None:
     """Return the canonical (lowercase, accent-stripped) form of a city name.
 
     Resolves the input against the DANE municipality list and KNOWN_ZONES so
-    every consumer (requirements, scraper URL builder, evaluator) compares the
-    same string. Returns ``None`` only for genuinely empty input — unknown
-    cities fall through with a warning so URL building and substring matching
-    still work.
+    every consumer (requirements, scraper URL builder, evaluator) compares
+    the same string. Returns ``None`` for empty input AND for any string we
+    can't resolve — callers MUST treat ``None`` as a hard signal that the
+    input isn't a known place and decide whether to ask the user for
+    clarification or omit the location from a URL. Previously this function
+    returned the raw normalized input on a miss, which let unknown cities
+    flow downstream and produce wildly off-location search results.
 
     Inputs carrying an administrative suffix like ``"Bogotá D.C."`` are
     canonicalized to the bare-name form (``"bogota"``) to mirror how the
@@ -132,8 +154,12 @@ def canonical_location(s: str | None) -> str | None:
         return norm
     if norm in KNOWN_ZONES:
         return KNOWN_ZONES[norm]
+    zone_hit = _find_known_zone_substring(norm)
+    if zone_hit is not None:
+        _, city = zone_hit
+        return city
     logger.warning("canonical_location: %r not in DANE list or KNOWN_ZONES", s)
-    return norm
+    return None
 
 
 def canonical_zone(s: str | None) -> str | None:
