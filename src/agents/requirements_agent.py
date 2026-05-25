@@ -56,12 +56,13 @@ class RequirementsExtraction(BaseModel):
     """
 
     is_property_search: bool = Field(
-        default=True,
+        ...,
         description=(
-            "True if the user is asking to search for properties or update "
-            "search filters. False if the user is just saying thanks, hello, "
-            "goodbye, or otherwise making small talk that doesn't change the "
-            "search."
+            "REQUIRED. Set False for any greeting, thanks, goodbye, or "
+            "small-talk turn that doesn't change the search (e.g. 'hola', "
+            "'gracias', 'ok perfecto', 'chao', 'ya no', 'no así está bien'). "
+            "Set True only when the user is asking to search for properties, "
+            "modify filters, or clarify something about an active search."
         ),
     )
     is_complete: bool = Field(
