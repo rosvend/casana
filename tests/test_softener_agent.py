@@ -14,6 +14,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from langchain_core.messages import AIMessage, HumanMessage  # noqa: E402
+
 from src.agents.softener_agent import _relax_one, softener_node  # noqa: E402
 from src.state import (  # noqa: E402
     Constraint,
@@ -59,8 +61,7 @@ def _build_state_price_20pct_over() -> PropertyFinderState:
         notes="Todos los candidatos excedieron el presupuesto.",
     )
     return PropertyFinderState(
-        user_query="Quiero un arriendo bajo 3M en Medellín",
-        chat_history=[{"role": "user", "content": "Quiero un arriendo bajo 3M en Medellín"}],
+        messages=[HumanMessage(content="Quiero un arriendo bajo 3M en Medellín")],
         requirements=requirements,
         evaluation=evaluation,
         softening_attempts=0,
@@ -88,17 +89,17 @@ def _scenario_price_relaxed_capped_at_15pct() -> bool:
         detail=f"got={price_c.max_value if price_c else None} expected={expected_max}",
     )
 
-    chat_delta = out.get("chat_history") or []
-    ok &= _check("chat_history append has exactly one entry", len(chat_delta) == 1)
-    last = chat_delta[-1] if chat_delta else {}
+    chat_delta = out.get("messages") or []
+    ok &= _check("messages append has exactly one entry", len(chat_delta) == 1)
+    last = chat_delta[-1] if chat_delta else None
     ok &= _check(
-        "appended message role is 'assistant'",
-        last.get("role") == "assistant",
-        detail=f"got role={last.get('role')}",
+        "appended message is an AIMessage",
+        isinstance(last, AIMessage),
+        detail=f"got {type(last).__name__ if last is not None else None}",
     )
     ok &= _check(
         "appended message content is non-empty string",
-        isinstance(last.get("content"), str) and len(last["content"].strip()) > 0,
+        isinstance(last, AIMessage) and isinstance(last.content, str) and len(last.content.strip()) > 0,
     )
 
     ok &= _check(
@@ -239,8 +240,7 @@ def test_softener_node_removes_zone_constraint() -> None:
         notes="No candidate in chapinero matched.",
     )
     state = PropertyFinderState(
-        user_query="Arriendo en Chapinero",
-        chat_history=[],
+        messages=[HumanMessage(content="Arriendo en Chapinero")],
         requirements=requirements,
         evaluation=evaluation,
         softening_attempts=0,

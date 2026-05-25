@@ -5,7 +5,7 @@ and ``state["softening_attempts"] < max_softening_attempts``. Reads
 ``aggregate_failure_reasons`` from the evaluator, mutates a copy of
 ``requirements.constraints`` with bounded relaxations, records each
 relaxation in ``softening_history``, increments ``softening_attempts``,
-and appends one assistant message (Colombian Spanish) to ``chat_history``
+and appends one ``AIMessage`` (Colombian Spanish) to ``messages``
 explaining the adjustment to the user.
 """
 
@@ -14,7 +14,7 @@ from __future__ import annotations
 import copy
 
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from src.state import (
@@ -42,7 +42,7 @@ def softener_node(state: PropertyFinderState) -> dict:
     """Relax hard constraints based on the evaluator's failure reasons.
 
     Returns only the keys this node writes (state is ``TypedDict(total=False)``):
-    ``requirements`` (mutated copy), ``chat_history`` (one-message append),
+    ``requirements`` (mutated copy), ``messages`` (one AIMessage append),
     ``softening_attempts`` (incremented), ``softening_history`` (append list).
     """
     load_dotenv()
@@ -90,7 +90,7 @@ def softener_node(state: PropertyFinderState) -> dict:
 
     return {
         "requirements": requirements,
-        "chat_history": [{"role": "assistant", "content": message}],
+        "messages": [AIMessage(content=message)],
         "softening_attempts": attempt_number,
         "softening_history": history_entries,
     }

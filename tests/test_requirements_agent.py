@@ -17,8 +17,13 @@ from __future__ import annotations
 
 import os
 import sys
+import uuid
+
+from langchain_core.messages import HumanMessage
+from langgraph.graph import END, StateGraph
 
 from src.agents.requirements_agent import requirements_node
+from src.graph.graph import make_memory_checkpointer
 from src.state import PropertyFinderState, StructuredRequirements
 
 
@@ -32,30 +37,43 @@ def _find_constraint(requirements: StructuredRequirements, field: str):
     return next((c for c in requirements.constraints if c.field == field), None)
 
 
-def test_incomplete_request() -> bool:
-    """A vague request must not be complete and must ask a Spanish question."""
-    state: PropertyFinderState = {"user_query": "Hola, busco un lugar para vivir."}
-    result = requirements_node(state)
+def _build_solo_graph():
+    """Compile a minimal graph (requirements_agent → END) so ``interrupt()``
+    has a runtime context. Returns (compiled_graph, config_for_one_thread)."""
+    graph = StateGraph(PropertyFinderState)
+    graph.add_node("requirements_agent", requirements_node)
+    graph.set_entry_point("requirements_agent")
+    graph.add_edge("requirements_agent", END)
+    compiled = graph.compile(checkpointer=make_memory_checkpointer())
+    config = {"configurable": {"thread_id": str(uuid.uuid4())}}
+    return compiled, config
 
-    question = result.get("clarification_question")
+
+def test_incomplete_request() -> bool:
+    """A vague request must trigger an interrupt with a Spanish question."""
+    compiled, config = _build_solo_graph()
+    compiled.invoke(
+        {"messages": [HumanMessage(content="Hola, busco un lugar para vivir.")]},
+        config=config,
+    )
+
+    snapshot = compiled.get_state(config)
+    interrupts = list(snapshot.interrupts) if snapshot else []
+    question = interrupts[0].value.get("clarification_question") if interrupts else None
     print(f"  clarification_question: {question!r}")
 
     passed = _check(
-        "requirements_complete is False",
-        result.get("requirements_complete") is False,
-        f"got {result.get('requirements_complete')!r}",
+        "graph paused with a pending interrupt",
+        len(interrupts) > 0,
+        f"got {len(interrupts)} interrupt(s)",
     )
     passed &= _check(
-        "clarification_question is a non-empty string",
+        "interrupt payload carries clarification_question string",
         isinstance(question, str) and bool(question.strip()),
     )
     passed &= _check(
-        "requirements is None while incomplete",
-        result.get("requirements") is None,
-    )
-    passed &= _check(
-        "user turn appended to chat_history",
-        any(t.get("role") == "user" for t in result.get("chat_history", [])),
+        "requirements still None while paused",
+        snapshot.values.get("requirements") is None if snapshot else False,
     )
     return passed
 
@@ -63,11 +81,15 @@ def test_incomplete_request() -> bool:
 def test_complete_request_with_weights() -> bool:
     """A rich request must extract English constraints and security-led weights."""
     state: PropertyFinderState = {
-        "user_query": (
-            "Busco un apto en Laureles, mínimo 2 habitaciones, máximo 3 millones "
-            "de pesos. Para mí lo más importante es que el barrio sea muy seguro "
-            "para mi familia, el precio pasa a segundo plano."
-        )
+        "messages": [
+            HumanMessage(
+                content=(
+                    "Busco un apto en Laureles, mínimo 2 habitaciones, máximo 3 "
+                    "millones de pesos. Para mí lo más importante es que el barrio "
+                    "sea muy seguro para mi familia, el precio pasa a segundo plano."
+                )
+            )
+        ]
     }
     result = requirements_node(state)
 
@@ -139,10 +161,14 @@ def _scenario_zone_only_splits_to_city_and_zone() -> bool:
     """A query that only names a neighborhood must yield BOTH a `location`
     constraint (the parent city) AND a separate `zone` constraint."""
     state: PropertyFinderState = {
-        "user_query": (
-            "Busco apartamento en arriendo en Chapinero, 2 habitaciones, "
-            "presupuesto 2 millones, prioridad seguridad."
-        )
+        "messages": [
+            HumanMessage(
+                content=(
+                    "Busco apartamento en arriendo en Chapinero, 2 habitaciones, "
+                    "presupuesto 2 millones, prioridad seguridad."
+                )
+            )
+        ]
     }
     result = requirements_node(state)
 

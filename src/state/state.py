@@ -12,13 +12,16 @@ Eight logical groups, in pipeline order:
 
 LangGraph idiom: `TypedDict` with `total=False` so each node returns only
 the keys it wrote; missing keys are simply absent and the framework merges
-partial updates. `Annotated[list, add]` is applied where the field must
-*accumulate across iterations* of a loop, not be overwritten — see the note
-on `chat_history` and `softening_history` below.
+partial updates. The `messages` field uses LangChain's `add_messages`
+reducer so resume-after-interrupt composes cleanly; `softening_history`
+uses `operator.add` for a plain append-only list.
 """
 
 from operator import add
 from typing import Annotated, TypedDict
+
+from langchain_core.messages import AnyMessage
+from langgraph.graph.message import add_messages
 
 from src.state.evaluation import EvaluationResult
 from src.state.listings import Candidate, Listing, VerifiedListing
@@ -36,20 +39,14 @@ class PropertyFinderState(TypedDict, total=False):
     dict.
     """
 
-    # 1. User input layer 
-    user_query: str
-    """The raw user request. Written by the graph entrypoint; read by
-    requirements_agent."""
-
-    chat_history: Annotated[list[dict[str, str]], add]
-    """Conversational turns accumulated during the requirements clarification
-    loop. Uses `add` so each requirements_agent self-loop iteration appends
-    rather than overwrites. Each entry is a {'role': ..., 'content': ...} dict."""
-
-    clarification_question: str | None
-    """The next question requirements_agent wants to ask the user. Written
-    by requirements_agent when `requirements_complete` is False; consumed by
-    the user-facing layer (out of graph scope) and cleared on the next pass."""
+    # 1. User input layer
+    messages: Annotated[list[AnyMessage], add_messages]
+    """The conversation. Seeded by the API/CLI with a HumanMessage, then
+    appended to by every agent that emits a user-facing turn. Uses
+    LangChain's `add_messages` reducer (dedupes by message id and supports
+    update-by-id) so resume-after-interrupt composes cleanly. The
+    clarification loop in requirements_agent pauses via `interrupt()`; the
+    question lives in the interrupt payload, not in state."""
 
     # 2. Structured requirements
     requirements: StructuredRequirements | None

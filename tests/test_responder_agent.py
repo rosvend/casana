@@ -18,6 +18,8 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 
+from langchain_core.messages import AIMessage, HumanMessage
+
 from src.agents.responder_agent import responder_node
 from src.state import (
     Candidate,
@@ -87,15 +89,15 @@ def _scenario_success_path_mentions_urls_and_whatsapp() -> bool:
             aggregate_failure_reasons=[],
             notes="2 candidate(s) scored; passes=True",
         ),
-        "chat_history": [{"role": "user", "content": "Busco apto en Chapinero"}],
+        "messages": [HumanMessage(content="Busco apto en Chapinero")],
         "softening_attempts": 0,
     }
 
     result = responder_node(state)
 
-    new_messages = result.get("chat_history")
+    new_messages = result.get("messages")
     passed = _check(
-        "result contains 'chat_history' as a list",
+        "result contains 'messages' as a list",
         isinstance(new_messages, list),
     )
     if not isinstance(new_messages, list):
@@ -110,12 +112,12 @@ def _scenario_success_path_mentions_urls_and_whatsapp() -> bool:
         return passed
 
     message = new_messages[0]
-    content = message.get("content", "") if isinstance(message, dict) else ""
+    content = message.content if isinstance(message, AIMessage) else ""
 
     passed &= _check(
-        "new message has role 'assistant'",
-        isinstance(message, dict) and message.get("role") == "assistant",
-        f"got role={message.get('role') if isinstance(message, dict) else type(message)}",
+        "new message is an AIMessage",
+        isinstance(message, AIMessage),
+        f"got {type(message).__name__}",
     )
     passed &= _check(
         "message content is non-empty",
@@ -146,21 +148,21 @@ def _scenario_failure_path_acknowledges_no_matches() -> bool:
             aggregate_failure_reasons=[],
             notes="no candidates remained after softening",
         ),
-        "chat_history": [{"role": "user", "content": "Busco apto barato"}],
+        "messages": [HumanMessage(content="Busco apto barato")],
         "softening_attempts": 3,
     }
 
     result = responder_node(state)
-    new_messages = result.get("chat_history")
+    new_messages = result.get("messages")
     passed = _check(
-        "result contains 'chat_history' as a list",
+        "result contains 'messages' as a list",
         isinstance(new_messages, list),
     )
     if not isinstance(new_messages, list) or not new_messages:
         return passed
 
     message = new_messages[0]
-    content = message.get("content", "") if isinstance(message, dict) else ""
+    content = message.content if isinstance(message, AIMessage) else ""
 
     passed &= _check(
         "exactly one new message appended",

@@ -1,16 +1,20 @@
 """`requirements_node` — the front-of-graph LangGraph node.
 
 This node turns a free-text user request into a structured brief. It sits at
-the entrypoint of the graph and gates the clarification self-loop:
-``requirements_router`` keeps routing back here until
-``state["requirements_complete"]`` is true.
+the entrypoint of the graph and gates the clarification loop via LangGraph's
+native ``interrupt()``: when the LLM judges the request incomplete, the node
+pauses; the API/CLI surfaces the question; resuming with
+``Command(resume=user_reply)`` re-enters this node with the reply appended
+to ``state["messages"]``. ``route_requirements`` self-loops the node until
+``requirements_complete`` flips to True.
 
 The work is a single LLM call with structured output:
 
 1. The LLM judges whether the request carries enough to run a search — at a
    minimum a **location** plus a **budget or transaction type**.
-2. If not, it writes a friendly ``clarification_question`` in Colombian
-   Spanish asking only for what is missing.
+2. If not, the node calls ``interrupt({"clarification_question": ...})``;
+   on resume the assistant's question and the user's reply are both
+   appended to ``messages`` and the router loops back.
 3. If so, it maps the request into a :class:`StructuredRequirements`: a flat
    list of :class:`Constraint` objects keyed by snake_case English ``field``
    names that mirror the :class:`Listing` model, plus ``priority_weights``
@@ -26,7 +30,9 @@ from __future__ import annotations
 import logging
 
 from dotenv import load_dotenv
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_openai import ChatOpenAI
+from langgraph.types import interrupt
 from pydantic import BaseModel, Field
 
 from src.state import Constraint, PropertyFinderState, StructuredRequirements
@@ -248,15 +254,37 @@ def _normalize_weights(weights: dict[str, float]) -> dict[str, float]:
     return {key: value / total for key, value in weights.items()}
 
 
-def requirements_node(state: PropertyFinderState) -> dict:
-    """Parse the user request into a structured brief (or ask for more info).
+def _pause_for_clarification(question: str) -> dict:
+    """Pause the graph and resume with the user's reply appended to messages.
 
-    Reads ``state["user_query"]`` (and any prior ``chat_history`` turns) and
-    returns the state update: ``requirements_complete`` gates the clarification
-    loop, ``requirements`` carries the parsed brief when complete, and
-    ``clarification_question`` carries the next question when it is not.
+    LangGraph re-runs the node on resume; the first call raises
+    ``GraphInterrupt`` to halt execution, and the second call (after
+    ``Command(resume=reply)``) returns ``reply`` from ``interrupt()`` so
+    we can append both turns to ``messages`` and let the router self-loop
+    back here for a fresh extraction.
     """
-    user_query = state.get("user_query", "") or ""
+    user_reply = interrupt({"clarification_question": question})
+    return {
+        "messages": [
+            AIMessage(content=question),
+            HumanMessage(content=user_reply),
+        ],
+        "requirements_complete": False,
+        "is_property_search": True,
+        "requirements": None,
+    }
+
+
+def requirements_node(state: PropertyFinderState) -> dict:
+    """Parse the conversation into a structured brief (or ask for more info).
+
+    Reads ``state["messages"]`` and returns the state update:
+    ``requirements_complete`` gates the loop, ``requirements`` carries the
+    parsed brief when complete. When clarification is needed, the node
+    pauses via :func:`interrupt`; resuming with the user reply re-runs the
+    node with the fuller context.
+    """
+    messages = list(state.get("messages") or [])
 
     llm = ChatOpenAI(model=MODEL, temperature=0)
     # function_calling (not strict json_schema) — StructuredRequirements has an
@@ -265,38 +293,24 @@ def requirements_node(state: PropertyFinderState) -> dict:
         RequirementsExtraction, method="function_calling"
     )
 
-    # Replay prior clarification turns so a looped run keeps multi-turn context.
-    messages: list[tuple[str, str]] = [("system", SYSTEM_PROMPT)]
-    for turn in state.get("chat_history") or []:
-        messages.append((turn.get("role", "user"), turn.get("content", "")))
-    messages.append(("human", user_query))
-
-    result: RequirementsExtraction = structured_llm.invoke(messages)
+    prompt: list = [("system", SYSTEM_PROMPT), *messages]
+    result: RequirementsExtraction = structured_llm.invoke(prompt)
     logger.info(
         "requirements_node: is_property_search=%s is_complete=%s",
         result.is_property_search,
         result.is_complete,
     )
 
-    # The user's turn is always recorded; chat_history uses an `add` reducer.
-    chat_history: list[dict[str, str]] = [{"role": "user", "content": user_query}]
-
     if not result.is_property_search:
         # Chit-chat / greeting / thanks — route straight to responder. The
         # responder handles the assistant turn so we don't pre-write one here.
-        return {
-            "chat_history": chat_history,
-            "is_property_search": False,
-        }
+        return {"is_property_search": False}
 
     if result.is_complete and result.extracted_requirements is not None:
         requirements = result.extracted_requirements
         requirements.priority_weights = _normalize_weights(requirements.priority_weights)
         geo_ok = _apply_geo_normalization(requirements)
         if not geo_ok:
-            # The LLM extracted a location we can't resolve. Don't run the
-            # scrape on garbage — flip back to clarification mode with a
-            # deterministic question (no extra LLM call needed).
             bad_loc = next(
                 (
                     c.exact_value
@@ -315,34 +329,25 @@ def requirements_node(state: PropertyFinderState) -> dict:
                     "Medellín, Bogotá, Cali, Barranquilla…"
                 )
             )
-            chat_history.append({"role": "assistant", "content": question})
             logger.info(
                 "requirements_node: location %r couldn't be canonicalized — clarifying",
                 bad_loc,
             )
-            return {
-                "chat_history": chat_history,
-                "requirements_complete": False,
-                "is_property_search": True,
-                "requirements": None,
-                "clarification_question": question,
-            }
+            return _pause_for_clarification(question)
+
         logger.info(
             "requirements_node: extracted %d constraint(s), weights=%s",
             len(requirements.constraints), requirements.priority_weights,
         )
         # Start of a new property search: wipe prior-turn results so stale
         # candidates/evaluation from earlier turns in the same thread don't
-        # leak into the new run. ``chat_history`` is intentionally not
-        # reset — its ``add`` reducer keeps the multi-turn dialogue intact.
-        # ``softening_history`` also uses ``add`` and can't be reset from a
-        # node return; downstream consumers tolerate cross-search noise.
+        # leak into the new run. ``messages`` is intentionally not reset —
+        # the add_messages reducer keeps the multi-turn dialogue intact.
+        # ``softening_history`` also can't be reset from a node return.
         return {
-            "chat_history": chat_history,
             "requirements_complete": True,
             "is_property_search": True,
             "requirements": requirements,
-            "clarification_question": None,
             "candidates": [],
             "evaluation": None,
             "softening_attempts": 0,
@@ -354,17 +359,10 @@ def requirements_node(state: PropertyFinderState) -> dict:
             "softening_summary": None,
         }
 
-    # Incomplete — ask for more, and record the question for the next loop.
+    # Incomplete — pause the graph and wait for the user's reply.
     question = result.clarification_question or (
         "¿Me cuentas un poco más sobre lo que buscas? Por ejemplo, en qué zona "
         "y cuál es tu presupuesto."
     )
-    chat_history.append({"role": "assistant", "content": question})
     logger.info("requirements_node: clarification needed — %s", question)
-    return {
-        "chat_history": chat_history,
-        "requirements_complete": False,
-        "is_property_search": True,
-        "requirements": None,
-        "clarification_question": question,
-    }
+    return _pause_for_clarification(question)

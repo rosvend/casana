@@ -5,9 +5,27 @@ The DANE municipality list (1,122 entries, shipped in
 for the ``location`` constraint. Anything not in that list but matched by
 :data:`KNOWN_ZONES` is split into ``(parent_city, zone)``.
 
-TODO: replace KNOWN_ZONES with a real datasource — e.g. a curated CSV of
-neighborhoods keyed by municipality code, or a small admin API. The hardcoded
-dict is an MVP shortcut and rots whenever the product covers a new neighborhood.
+TODO(geography): replace :data:`KNOWN_ZONES` with a real datasource. The
+hardcoded dict is brittle, biased toward Bogotá + Medellín, and rots whenever
+the product touches a new neighborhood. Failure modes seen in production:
+    - LLM emits joined strings like ``"chapinero_bogota"`` that don't match
+      any single entry — even though both halves are known. Pre-splitting on
+      ``_`` / ``,`` before canonicalization would catch this without new data.
+    - Common variants ("chapinero alto", "chapinero central", "el chico")
+      collapse to one canonical zone with no disambiguation.
+    - Smaller cities (Cali, Barranquilla, Bucaramanga) have ~0 coverage.
+
+Candidate replacements, in order of expected ROI:
+    1. Per-city neighborhood CSVs in ``data/neighborhoods/<city>.csv`` sourced
+       from each city's open-data portal (Bogotá: Catastro Distrital UPZ
+       /barrios; Medellín: Alcaldía comunas y barrios; etc.). Same pattern as
+       DANE — deterministic, offline, testable. Start with the top 5 cities.
+    2. OSM Nominatim (self-hosted or rate-limited public instance) as a
+       fallback for misses, with local caching since neighborhood names
+       don't change often. Avoid Google Maps (cost + ToS).
+    3. RAG / vector search is overkill here — a neighborhood name is a
+       discrete identifier, not a fuzzy concept. Skip unless we hit fuzzy
+       *meaning* problems (e.g. "barrio chévere cerca del estadio").
 """
 
 from __future__ import annotations

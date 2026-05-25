@@ -75,25 +75,28 @@ MAX_SOFTENING_ATTEMPTS = 3
 
 
 def route_requirements(state: PropertyFinderState) -> list[str]:
-    """Fan out to the scrape branches, or short-circuit out of the graph.
+    """Fan out to the scrape branches, or short-circuit / self-loop.
 
-    Three bypasses, checked in order:
+    Three branches, checked in order:
 
-    - ``is_property_search`` False  → ``responder_agent`` produces a brief
+    - ``is_property_search`` False → ``responder_agent`` produces a brief
       chit-chat reply (greeting / thanks / goodbye).
-    - ``requirements_complete`` False → END. requirements_agent has already
-      appended its clarification question to ``chat_history``; the CLI
-      prints the last assistant turn, so no further node needs to run.
+    - ``requirements_complete`` False → self-loop back into
+      ``requirements_agent``. The node just resumed from an ``interrupt()``
+      with the user's clarification reply appended to ``messages``; we route
+      back so the LLM re-extracts with the fuller context. Without this
+      explicit self-loop the graph would fan out to ``properties_agent`` /
+      ``news_agent`` while requirements are still incomplete.
     - otherwise → fan out to ``properties_agent`` + ``news_agent``.
 
     The softener_agent reuses this router for its retry pass — softening
-    only fires after a complete property search, so both bypass conditions
-    are False there and the scrape fan-out wins.
+    only fires after a complete property search, so the self-loop branch
+    is unreachable there and the scrape fan-out wins.
     """
     if state.get("is_property_search") is False:
         return ["responder_agent"]
-    if state.get("requirements_complete") is False:
-        return [END]
+    if not state.get("requirements_complete"):
+        return ["requirements_agent"]
     return ["properties_agent", "news_agent"]
 
 
@@ -111,7 +114,25 @@ def route_evaluation(state: PropertyFinderState) -> str:
     return "responder_agent"
 
 
-def build_graph():
+def make_memory_checkpointer() -> MemorySaver:
+    """Build an in-memory checkpointer with the project-specific serde.
+
+    Exported so the API (`src/api/deps.py`) and CLI (`src/main.py`) share
+    the same `_ALLOWED_STATE_MODULES` allow-list — keep them in sync from
+    one place. Swap this for a Postgres-backed saver to persist threads
+    across restarts.
+    """
+    serde = JsonPlusSerializer(allowed_msgpack_modules=_ALLOWED_STATE_MODULES)
+    return MemorySaver(serde=serde)
+
+
+def build_graph(checkpointer=None):
+    """Compile the Estatia graph.
+
+    Callers own the checkpointer so a request-scoped saver (in-memory for
+    tests, Postgres in prod) can be injected without recompiling. Pass
+    `make_memory_checkpointer()` for a default in-memory thread store.
+    """
     graph = StateGraph(PropertyFinderState)
 
     graph.add_node("requirements_agent", requirements_agent)
@@ -128,7 +149,7 @@ def build_graph():
     graph.add_conditional_edges(
         "requirements_agent",
         route_requirements,
-        ["properties_agent", "news_agent", "responder_agent", END],
+        ["requirements_agent", "properties_agent", "news_agent", "responder_agent"],
     )
 
     graph.add_edge("properties_agent", "synthesizer_agent")
@@ -155,6 +176,4 @@ def build_graph():
     graph.add_edge("whatsapp_agent", "responder_agent")
     graph.add_edge("responder_agent", END)
 
-    serde = JsonPlusSerializer(allowed_msgpack_modules=_ALLOWED_STATE_MODULES)
-    memory = MemorySaver(serde=serde)
-    return graph.compile(checkpointer=memory)
+    return graph.compile(checkpointer=checkpointer)

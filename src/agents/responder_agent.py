@@ -2,8 +2,9 @@
 
 Runs after either ``whatsapp_agent`` (success path) or directly after the
 evaluator gave up (softening budget exhausted). Builds a deterministic text
-summary of the run's outcome, hands it to ``gpt-4o-mini`` for a friendly
-Colombian-Spanish Markdown reply, and appends the reply to ``chat_history``.
+summary of the run's outcome, hands it to ``gpt-5-nano`` for a friendly
+Colombian-Spanish Markdown reply, and appends the reply to ``messages``
+as an ``AIMessage``.
 
 The summary is built in pure Python so the LLM never has to invent values:
 all property facts come straight from ``Candidate.listing`` / ``match_score``,
@@ -44,12 +45,12 @@ _CHITCHAT_SYSTEM_PROMPT = (
 
 
 def responder_node(state: PropertyFinderState) -> dict:
-    """Produce the final user-facing reply and append it to ``chat_history``.
+    """Produce the final user-facing reply and append it to ``messages``.
 
     Reads ``candidates``, ``evaluation``, and ``softening_attempts`` from the
-    state. Returns ``{"chat_history": [{"role": "assistant", "content": ...}]}``
-    — a single-element list, which the ``add`` reducer on ``chat_history``
-    appends to whatever history is already there.
+    state. Returns ``{"messages": [AIMessage(content=...)]}``  — a
+    single-element list, which the ``add_messages`` reducer appends to
+    whatever conversation is already there.
 
     When ``is_property_search`` is ``False`` (set by requirements_agent for
     greetings / thanks / goodbyes) the node short-circuits to a brief
@@ -57,7 +58,7 @@ def responder_node(state: PropertyFinderState) -> dict:
     stale prior-turn candidates aren't re-served.
     """
     if state.get("is_property_search") is False:
-        return _respond_chitchat(state.get("chat_history") or [])
+        return _respond_chitchat(state.get("messages") or [])
 
     candidates: list[Candidate] = state.get("candidates") or []
     evaluation: EvaluationResult | None = state.get("evaluation")
@@ -88,28 +89,20 @@ def responder_node(state: PropertyFinderState) -> dict:
         ]
     )
 
-    return {
-        "chat_history": [{"role": "assistant", "content": response.content}]
-    }
+    return {"messages": [AIMessage(content=response.content)]}
 
 
-def _respond_chitchat(history: list[dict[str, str]]) -> dict:
-    """Generate a brief friendly reply from ``chat_history`` alone."""
-    messages: list = [SystemMessage(content=_CHITCHAT_SYSTEM_PROMPT)]
-    for turn in history:
-        role = turn.get("role", "user")
-        content = turn.get("content", "")
-        if role == "assistant":
-            messages.append(AIMessage(content=content))
-        else:
-            messages.append(HumanMessage(content=content))
+def _respond_chitchat(history: list) -> dict:
+    """Generate a brief friendly reply from the conversation ``messages``."""
+    prompt: list = [SystemMessage(content=_CHITCHAT_SYSTEM_PROMPT)]
+    for message in history:
+        if isinstance(message, (HumanMessage, AIMessage, SystemMessage)):
+            prompt.append(message)
 
     llm = ChatOpenAI(model=MODEL, temperature=0.3)
-    response = llm.invoke(messages)
+    response = llm.invoke(prompt)
     logger.info("responder_node: chit-chat reply")
-    return {
-        "chat_history": [{"role": "assistant", "content": response.content}]
-    }
+    return {"messages": [AIMessage(content=response.content)]}
 
 
 def _build_success_summary(top: list[Candidate]) -> str:
