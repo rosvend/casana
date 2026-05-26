@@ -15,7 +15,7 @@ Autonomous multi-agent system for real estate acquisition. Agents search listing
 This repo contains multiple building blocks that power Casana.
 
 <p align="center">
-  <img src="docs/casana_architecture.png" height="800" width="800">
+  <img src="docs/casana-architecture.png" height="800" width="800">
 </p>
 
 ## Agents

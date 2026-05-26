@@ -227,3 +227,6 @@ __marimo__/
 
 #langgraph
 .langgraph_api/
+.agents
+.mcp.json
+skills-lock.json
