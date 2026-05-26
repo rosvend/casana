@@ -1,21 +1,21 @@
 
 <p align="center">
-  <img src="docs/estatia_logo3.png" height="200" width="400">
+  <img src="docs/casana-logo-github.png" height="200" width="400">
 </p>
 
-# Estatia
+# Casana
 
 Autonomous multi-agent system for real estate acquisition. Agents search listings across multiple sources, verify availability, evaluate properties against user requirements, and iteratively refine results — all without human intervention.
 
 > [!IMPORTANT]
-> Estatia is currently in **early development**. APIs, prompts, and agent orchestration flows may change frequently.
+> Casana is currently in **early development**. APIs, prompts, and agent orchestration flows may change frequently.
 
 ## Architecture
 
-This repo contains multiple building blocks that power Estatia.
+This repo contains multiple building blocks that power Casana.
 
 <p align="center">
-  <img src="docs/estatia_architecture.png" height="800" width="800">
+  <img src="docs/casana_architecture.png" height="800" width="800">
 </p>
 
 ## Agents
@@ -55,7 +55,7 @@ uv run src.main
 docker compose -f docker-compose.evolution.yml up -d
 
 # Open http://localhost:8080/manager and scan the QR for instance $EVOLUTION_INSTANCE
-# (default: estatia) with the WhatsApp account you want to send from.
+# (default: Casana) with the WhatsApp account you want to send from.
 ```
 
 The agent only contacts candidates with `match_score >= 0.70`, capped at the top 3 by score, and adds a randomized 3–8 s delay between sends as a basic anti-ban measure. Listings without a phone number, or runs where outreach is disabled, are still promoted to `VerifiedListing` with `availability_confirmed=False` and a note explaining why — the downstream schema stays uniform.
