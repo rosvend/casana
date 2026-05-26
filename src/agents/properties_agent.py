@@ -105,6 +105,11 @@ def _extract_params(
         elif field == "zone":
             # Soft zone constraints don't gate, so they shouldn't narrow the
             # search URL either — softener relies on this to widen results.
+            # TODO(geography): when a zone is valid but the scrape returns 0
+            # listings, expand to the nearest adjacent neighborhoods using the
+            # centroid stored in data/normalized_zones.json (haversine ranking)
+            # instead of falling all the way back to the whole city. This
+            # preserves the user's geographic intent across the softener loop.
             if (
                 c.constraint_type == "hard"
                 and isinstance(c.exact_value, str)
