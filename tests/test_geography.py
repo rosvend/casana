@@ -141,3 +141,73 @@ def test_compound_underscore_with_accents():
     result = normalize_geography("El Poblado_Medellín")
     assert result["location"] == "medellin"
     assert result["zone"] == "el poblado"
+
+
+# ---------------------------------------------------------------------------
+# resolve_place(): rich data-driven resolver backed by normalized_zones.json.
+# ---------------------------------------------------------------------------
+
+from src.utils.geography import PlaceMatch, resolve_place
+
+
+def test_resolve_place_exact_zone_match():
+    # Chapinero is a localidad (upper_division) in the Bogotá data — not a
+    # barrio name. Either field can carry the hit; both pin to bogota.
+    m = resolve_place("Chapinero")
+    assert m is not None
+    assert m.city == "bogota"
+    assert "chapinero" in (m.neighborhood or m.upper_division or "")
+    assert m.centroid_lat is not None and m.centroid_lon is not None
+    assert -75 < m.centroid_lon < -73 and 4 < m.centroid_lat < 5
+
+
+def test_resolve_place_compound_underscore():
+    m = resolve_place("chapinero_bogota")
+    assert m is not None and m.city == "bogota"
+    assert "chapinero" in (m.neighborhood or m.upper_division or "")
+
+
+def test_resolve_place_typo_within_one_char():
+    m = resolve_place("chapinerro")  # extra r
+    assert m is not None
+    assert "chapinero" in (m.neighborhood or m.upper_division or "")
+
+
+def test_resolve_place_unknown_returns_none():
+    assert resolve_place("Atlantis") is None
+    assert resolve_place("xxxxyyyyzzzz") is None
+
+
+def test_resolve_place_empty_returns_none():
+    assert resolve_place("") is None
+    assert resolve_place(None) is None
+    assert resolve_place("   ") is None
+
+
+def test_resolve_place_city_only_returns_match_with_null_neighborhood():
+    m = resolve_place("Medellín")
+    assert m is not None
+    assert m.city == "medellin"
+
+
+def test_resolve_place_upper_division():
+    m = resolve_place("Comuna 14")  # Cali — "comuna 14" stored as upper_division
+    assert m is not None and m.city == "cali"
+    assert m.upper_division and "14" in m.upper_division
+
+
+def test_resolve_place_handles_five_cities():
+    for s, expected_city in [
+        ("El Poblado", "medellin"),
+        ("Laureles", "medellin"),
+        ("Chapinero", "bogota"),
+        ("Bocagrande", "cartagena"),
+    ]:
+        m = resolve_place(s)
+        assert m is not None, f"resolve_place({s!r}) returned None"
+        assert m.city == expected_city, (s, m)
+
+
+def test_resolve_place_is_typed_placematch():
+    m = resolve_place("Medellín")
+    assert isinstance(m, PlaceMatch)
