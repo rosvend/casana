@@ -58,4 +58,4 @@ docker compose -f docker-compose.evolution.yml up -d
 # (default: Casana) with the WhatsApp account you want to send from.
 ```
 
-The agent only contacts candidates with `match_score >= 0.70`, capped at the top 3 by score, and adds a randomized 3–8 s delay between sends as a basic anti-ban measure. Listings without a phone number, or runs where outreach is disabled, are still promoted to `VerifiedListing` with `availability_confirmed=False` and a note explaining why — the downstream schema stays uniform.
+The agent only contacts candidates with `match_score >= 0.70`, capped at the top 3 by score, and adds a randomized 3–8 s delay between sends as a basic anti-ban measure. 
