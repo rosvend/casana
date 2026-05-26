@@ -39,7 +39,7 @@ def client():
 
 
 def test_health(client: TestClient) -> None:
-    resp = client.get("/health")
+    resp = client.get("/api/health")
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ok"
@@ -52,7 +52,7 @@ def test_chat_triggers_interrupt_on_ambiguous_query(client: TestClient) -> None:
 
     thread_id = f"t-{uuid.uuid4()}"
     resp = client.post(
-        "/chat",
+        "/api/chat",
         json={"thread_id": thread_id, "user_message": "Hola, busco un lugar para vivir."},
     )
     assert resp.status_code == 200
@@ -69,7 +69,7 @@ def test_resume_continues_after_interrupt(client: TestClient) -> None:
 
     thread_id = f"t-{uuid.uuid4()}"
     chat_resp = client.post(
-        "/chat",
+        "/api/chat",
         json={"thread_id": thread_id, "user_message": "Busco apartamento."},
     )
     assert chat_resp.status_code == 200
@@ -77,7 +77,7 @@ def test_resume_continues_after_interrupt(client: TestClient) -> None:
     assert chat_resp.json()["interrupt"] is not None
 
     resume_resp = client.post(
-        "/resume",
+        "/api/resume",
         json={
             "thread_id": thread_id,
             "resume_payload": "En Chapinero, Bogotá, presupuesto 3 millones de pesos para arriendo.",
@@ -93,8 +93,8 @@ def test_history_returns_messages_for_thread(client: TestClient) -> None:
         pytest.skip("OPENAI_API_KEY not set — needs a real LLM call")
 
     thread_id = f"t-{uuid.uuid4()}"
-    client.post("/chat", json={"thread_id": thread_id, "user_message": "Hola"})
-    resp = client.get(f"/history/{thread_id}")
+    client.post("/api/chat", json={"thread_id": thread_id, "user_message": "Hola"})
+    resp = client.get(f"/api/history/{thread_id}")
     assert resp.status_code == 200
     body = resp.json()
     assert body["thread_id"] == thread_id
@@ -102,11 +102,11 @@ def test_history_returns_messages_for_thread(client: TestClient) -> None:
 
 
 def test_history_for_unknown_thread_is_empty(client: TestClient) -> None:
-    resp = client.get(f"/history/never-used-{uuid.uuid4()}")
+    resp = client.get(f"/api/history/never-used-{uuid.uuid4()}")
     assert resp.status_code == 200
     assert resp.json()["messages"] == []
 
 
 def test_chat_validates_empty_message(client: TestClient) -> None:
-    resp = client.post("/chat", json={"thread_id": "t1", "user_message": ""})
+    resp = client.post("/api/chat", json={"thread_id": "t1", "user_message": ""})
     assert resp.status_code == 422

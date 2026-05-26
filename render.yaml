@@ -1,0 +1,33 @@
+# Render Blueprint — provider-specific wrapper around a provider-agnostic
+# Dockerfile. To migrate hosts: keep the Dockerfile, drop this file, point
+# the new platform at the same image and re-supply the env vars below.
+#
+# Secrets (sync:false) must be set in the Render dashboard the first time
+# the Blueprint is applied. Render won't sync those across environments.
+
+services:
+  - type: web
+    name: estatia
+    runtime: docker
+    plan: free
+    region: oregon
+    repo: https://github.com/rosvend/casana
+    branch: main
+    autoDeployTrigger: commit
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      # Supabase pooler connection string. Paste once in the Render dashboard.
+      - key: DATABASE_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+
+      - key: WHATSAPP_ENABLED
+        value: "false"
+      - key: ESTATIA_ALLOWED_ORIGINS
+        value: "*"
+      - key: ESTATIA_LOG_LEVEL
+        value: INFO

@@ -1,0 +1,41 @@
+# Local environments
+.venv/
+**/__pycache__/
+**/*.py[cod]
+
+# Frontend build artefacts (rebuilt inside the image)
+src/frontend/node_modules/
+src/frontend/dist/
+
+# Local tooling state
+.git/
+.github/
+.claude/
+.playwright/
+.playwright-cli/
+.langgraph_api/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Editor / OS junk
+.DS_Store
+.vscode/
+.idea/
+
+# Secrets & local-only configs (Render injects env vars at runtime)
+.env
+.env.local
+.env.*.local
+
+# Tests aren't needed at runtime — saves image size
+tests/
+
+# Docs and packaging clutter
+docs/_build/
+*.egg-info/
+dist/
+build/
+
+# Logs / temp
+*.log

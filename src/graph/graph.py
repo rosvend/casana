@@ -114,6 +114,10 @@ def route_evaluation(state: PropertyFinderState) -> str:
     return "responder_agent"
 
 
+def _make_serde() -> JsonPlusSerializer:
+    return JsonPlusSerializer(allowed_msgpack_modules=_ALLOWED_STATE_MODULES)
+
+
 def make_memory_checkpointer() -> MemorySaver:
     """Build an in-memory checkpointer with the project-specific serde.
 
@@ -122,8 +126,30 @@ def make_memory_checkpointer() -> MemorySaver:
     one place. Swap this for a Postgres-backed saver to persist threads
     across restarts.
     """
-    serde = JsonPlusSerializer(allowed_msgpack_modules=_ALLOWED_STATE_MODULES)
-    return MemorySaver(serde=serde)
+    return MemorySaver(serde=_make_serde())
+
+
+def make_postgres_checkpointer(conn_string: str):
+    """Build a Postgres-backed checkpointer that survives process restarts.
+
+    Backed by a psycopg connection pool so the FastAPI threadpool can run
+    concurrent graph invocations without sharing a single fragile
+    connection. The pool lives for the full process lifetime; the OS
+    reclaims it on shutdown.
+    """
+    from langgraph.checkpoint.postgres import PostgresSaver
+    from psycopg_pool import ConnectionPool
+
+    pool = ConnectionPool(
+        conninfo=conn_string,
+        max_size=10,
+        kwargs={"autocommit": True, "prepare_threshold": 0},
+        open=True,
+    )
+    saver = PostgresSaver(pool)
+    saver.serde = _make_serde()
+    saver.setup()
+    return saver
 
 
 def build_graph(checkpointer=None):
