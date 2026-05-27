@@ -28,6 +28,7 @@ node, so the invariant holds regardless of model drift.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, HumanMessage
@@ -37,10 +38,10 @@ from pydantic import BaseModel, Field
 
 from src.state import Constraint, PropertyFinderState, StructuredRequirements
 from src.utils.geography import (
-    KNOWN_ZONES,
     canonical_location,
     canonical_zone,
     normalize_geography,
+    resolve_place,
 )
 
 
@@ -166,67 +167,82 @@ Ejemplos INCORRECTOS (NO HAGAS ESTO):
 """
 
 
-def _apply_geo_normalization(requirements: StructuredRequirements) -> bool:
+@dataclass
+class _GeoCheck:
+    """Outcome of :func:`_apply_geo_normalization`.
+
+    ``ok=True`` → requirements are usable downstream.
+    ``ok=False`` → ``clarification`` carries the question to put to the user
+    via :func:`interrupt`. Carries enough specificity (city vs. zone) so the
+    bot doesn't ask the wrong question.
+    """
+
+    ok: bool
+    clarification: str | None = None
+
+
+def _apply_geo_normalization(requirements: StructuredRequirements) -> _GeoCheck:
     """Normalize / split / synthesize the location and zone constraints.
 
-    Mutates ``requirements.constraints`` in place and returns whether the
-    geography is usable downstream:
+    Mutates ``requirements.constraints`` in place. On a known-explicit-but-
+    unknown zone the function returns ``ok=False`` with a zone-specific
+    clarification so the bot asks the user to correct or pick another
+    neighborhood instead of letting the scraper return 0 results.
 
-    - ``True``  — the brief either has a canonical location, or no location
-      at all and we couldn't infer one (caller decides what to do next).
-    - ``False`` — the LLM extracted a location string that we can't resolve
-      to a DANE municipality, a KNOWN_ZONES parent city, or a substring
-      match. The caller should ask the user for clarification rather than
-      run a scrape on garbage.
-
-    Behaviors:
-
+    Behaviors preserved from the prior implementation:
     - Sub-municipal ``location`` (e.g. ``"chapinero"`` or ``"laureles
       medellin"``) is split into ``location=parent_city`` plus a synthesized
       ``zone`` if the LLM didn't already supply one.
-    - If the LLM extracted only a ``zone`` that maps to a known parent city,
-      a hard ``location`` constraint is synthesized so the evaluator's
-      hard-constraint gate has something to reject wrong-city listings with.
-    - Every location/zone string that survives canonicalization is canonical
-      (lowercase, accent-stripped, validated against the DANE list) so every
-      downstream consumer can compare them by simple equality.
+    - If only a ``zone`` was extracted and it resolves, the missing ``location``
+      is synthesized so the evaluator's hard-constraint gate has something to
+      reject wrong-city listings with.
+    - Every surviving location/zone string is canonical (lowercase, accent-
+      stripped) so downstream equality comparisons stay apples-to-apples.
     """
     constraints = requirements.constraints
     loc_constraint = next((c for c in constraints if c.field == "location"), None)
+    zone_constraints = [c for c in constraints if c.field == "zone"]
+
+    # --- Validate zones first: an explicit unknown zone is a hard stop. ---
+    for zc in zone_constraints:
+        if not isinstance(zc.exact_value, str):
+            continue
+        m = resolve_place(zc.exact_value)
+        if m is None or (m.neighborhood is None and m.upper_division is None):
+            logger.info(
+                "_apply_geo_normalization: zone %r did not resolve — clarifying",
+                zc.exact_value,
+            )
+            return _GeoCheck(
+                ok=False,
+                clarification=(
+                    f"No encuentro el barrio o zona «{zc.exact_value}» en mis "
+                    "datos. ¿Podrías confirmar el nombre exacto, o indicarme "
+                    "otra zona donde te gustaría buscar?"
+                ),
+            )
+        # Canonicalize in place to the matched identifier.
+        zc.exact_value = m.neighborhood or m.upper_division
 
     # Branch A: no location constraint from the LLM.
     if loc_constraint is None or not isinstance(loc_constraint.exact_value, str):
-        # Still canonicalize any pre-existing zone constraint emitted by the LLM.
-        for c in constraints:
-            if c.field == "zone" and isinstance(c.exact_value, str):
-                canon = canonical_zone(c.exact_value)
-                if canon:
-                    c.exact_value = canon
-        # If a zone constraint matches a known parent city, synthesize the
-        # missing location so the evaluator can actually gate.
-        zone_constraint = next(
-            (
-                c
-                for c in constraints
-                if c.field == "zone" and isinstance(c.exact_value, str)
-            ),
-            None,
-        )
-        if zone_constraint is not None:
-            parent_city = KNOWN_ZONES.get(zone_constraint.exact_value)
-            if parent_city:
+        if zone_constraints:
+            # Synthesize location from the first resolved zone.
+            first_zone = zone_constraints[0]
+            zone_match = resolve_place(first_zone.exact_value)
+            if zone_match and zone_match.city:
                 constraints.append(Constraint(
                     field="location",
-                    exact_value=parent_city,
+                    exact_value=zone_match.city,
                     constraint_type="hard",
                     importance="critical",
                 ))
                 logger.info(
                     "_apply_geo_normalization: synthesized location=%r from zone=%r",
-                    parent_city,
-                    zone_constraint.exact_value,
+                    zone_match.city,
+                    first_zone.exact_value,
                 )
-        return True
+        return _GeoCheck(ok=True)
 
     # Branch B: the LLM gave us a location. Try to canonicalize it.
     result = normalize_geography(loc_constraint.exact_value)
@@ -238,32 +254,30 @@ def _apply_geo_normalization(requirements: StructuredRequirements) -> bool:
             "_apply_geo_normalization: could not canonicalize location=%r",
             loc_constraint.exact_value,
         )
-        return False
+        return _GeoCheck(
+            ok=False,
+            clarification=(
+                f"No reconocí «{loc_constraint.exact_value}» como una ciudad "
+                "colombiana. ¿Podrías indicarme exactamente en qué ciudad quieres "
+                "buscar? Por ejemplo: Medellín, Bogotá, Cali, Barranquilla, "
+                "Bucaramanga…"
+            ),
+        )
     loc_constraint.exact_value = canon_location
 
-    # Canonicalize a pre-existing zone constraint regardless of whether the
-    # location string itself triggered a split.
-    for c in constraints:
-        if c.field == "zone" and isinstance(c.exact_value, str):
-            canon = canonical_zone(c.exact_value)
-            if canon:
-                c.exact_value = canon
+    # If the location string also carried a zone and no zone constraint
+    # exists yet, synthesize one.
+    if result["zone"] and not zone_constraints:
+        canon_zone = canonical_zone(result["zone"])
+        if canon_zone:
+            constraints.append(Constraint(
+                field="zone",
+                exact_value=canon_zone,
+                constraint_type="hard",
+                importance="critical",
+            ))
 
-    if result["zone"] is None:
-        return True
-
-    if any(c.field == "zone" for c in constraints):
-        return True
-    canon_zone = canonical_zone(result["zone"])
-    if not canon_zone:
-        return True
-    constraints.append(Constraint(
-        field="zone",
-        exact_value=canon_zone,
-        constraint_type="hard",
-        importance="critical",
-    ))
-    return True
+    return _GeoCheck(ok=True)
 
 
 def _normalize_weights(weights: dict[str, float]) -> dict[str, float]:
@@ -334,29 +348,11 @@ def requirements_node(state: PropertyFinderState) -> dict:
     if result.is_complete and result.extracted_requirements is not None:
         requirements = result.extracted_requirements
         requirements.priority_weights = _normalize_weights(requirements.priority_weights)
-        geo_ok = _apply_geo_normalization(requirements)
-        if not geo_ok:
-            bad_loc = next(
-                (
-                    c.exact_value
-                    for c in requirements.constraints
-                    if c.field == "location" and isinstance(c.exact_value, str)
-                ),
-                None,
-            )
-            question = (
-                f"No reconocí '{bad_loc}' como una ciudad colombiana. "
-                "¿Podrías indicarme exactamente en qué ciudad quieres buscar? "
-                "Por ejemplo: Medellín, Bogotá, Cali, Barranquilla, Bucaramanga…"
-                if bad_loc
-                else (
-                    "¿En qué ciudad colombiana quieres buscar? Por ejemplo: "
-                    "Medellín, Bogotá, Cali, Barranquilla…"
-                )
-            )
-            logger.info(
-                "requirements_node: location %r couldn't be canonicalized — clarifying",
-                bad_loc,
+        geo_check = _apply_geo_normalization(requirements)
+        if not geo_check.ok:
+            question = geo_check.clarification or (
+                "¿En qué ciudad colombiana quieres buscar? Por ejemplo: "
+                "Medellín, Bogotá, Cali, Barranquilla…"
             )
             return _pause_for_clarification(question)
 

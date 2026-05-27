@@ -1,3 +1,15 @@
-from src.utils.geography import normalize_geography
+from src.utils.geography import (
+    PlaceMatch,
+    canonical_location,
+    canonical_zone,
+    normalize_geography,
+    resolve_place,
+)
 
-__all__ = ["normalize_geography"]
+__all__ = [
+    "PlaceMatch",
+    "canonical_location",
+    "canonical_zone",
+    "normalize_geography",
+    "resolve_place",
+]

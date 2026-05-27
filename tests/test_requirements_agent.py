@@ -204,6 +204,82 @@ def _scenario_zone_only_splits_to_city_and_zone() -> bool:
     return passed
 
 
+def _scenario_unknown_zone_returns_geocheck_clarification() -> bool:
+    """An explicit unknown zone must short-circuit with a zone-specific question.
+
+    Pure unit test on ``_apply_geo_normalization`` — no LLM needed. The
+    requirements agent's interrupt path is driven by ``_GeoCheck.ok=False``
+    and the clarification string that the function returns.
+    """
+    from src.agents.requirements_agent import _apply_geo_normalization
+    from src.state import Constraint
+
+    requirements = StructuredRequirements(
+        constraints=[
+            Constraint(
+                field="location", exact_value="bogota",
+                constraint_type="hard", importance="critical",
+            ),
+            Constraint(
+                field="zone", exact_value="Xenovaria",  # not a real Bogotá zone
+                constraint_type="hard", importance="critical",
+            ),
+        ],
+        summary="test",
+        priority_weights={"price": 0.34, "location": 0.33, "security": 0.33},
+    )
+    check = _apply_geo_normalization(requirements)
+    passed = _check(
+        "unknown zone → _GeoCheck.ok is False",
+        check.ok is False,
+        f"got ok={check.ok}",
+    )
+    passed &= _check(
+        "unknown zone → clarification mentions the offending zone",
+        check.clarification is not None
+        and "Xenovaria" in (check.clarification or ""),
+        f"got clarification={check.clarification!r}",
+    )
+    return passed
+
+
+def _scenario_known_zone_canonicalizes_and_passes() -> bool:
+    """A real zone (Chapinero, Bogotá) must canonicalize and return ok."""
+    from src.agents.requirements_agent import _apply_geo_normalization
+    from src.state import Constraint
+
+    requirements = StructuredRequirements(
+        constraints=[
+            Constraint(
+                field="location", exact_value="Bogotá",
+                constraint_type="hard", importance="critical",
+            ),
+            Constraint(
+                field="zone", exact_value="Chapinero",
+                constraint_type="hard", importance="critical",
+            ),
+        ],
+        summary="test",
+        priority_weights={"price": 0.34, "location": 0.33, "security": 0.33},
+    )
+    check = _apply_geo_normalization(requirements)
+    loc = _find_constraint(requirements, "location")
+    zone = _find_constraint(requirements, "zone")
+    passed = _check("known zone → ok", check.ok, f"got ok={check.ok}")
+    passed &= _check(
+        "known zone → location canonicalized to lowercase",
+        loc is not None and loc.exact_value == "bogota",
+        f"got {loc.exact_value if loc else None}",
+    )
+    passed &= _check(
+        "known zone → zone canonicalized to chapinero",
+        zone is not None and isinstance(zone.exact_value, str)
+        and "chapinero" in zone.exact_value.lower(),
+        f"got {zone.exact_value if zone else None}",
+    )
+    return passed
+
+
 def main() -> int:
     print("=== requirements_node ===")
     ok = True
@@ -213,6 +289,10 @@ def main() -> int:
     ok &= test_complete_request_with_weights()
     print("\ntest_zone_only_splits_to_city_and_zone:")
     ok &= _scenario_zone_only_splits_to_city_and_zone()
+    print("\ntest_unknown_zone_returns_geocheck_clarification:")
+    ok &= _scenario_unknown_zone_returns_geocheck_clarification()
+    print("\ntest_known_zone_canonicalizes_and_passes:")
+    ok &= _scenario_known_zone_canonicalizes_and_passes()
     print(f"\n{'ALL TESTS PASSED' if ok else 'SOME TESTS FAILED'}")
     return 0 if ok else 1
 
@@ -223,6 +303,14 @@ def test_zone_only_splits_to_city_and_zone() -> None:
 
         pytest.skip("OPENAI_API_KEY not set")
     assert _scenario_zone_only_splits_to_city_and_zone()
+
+
+def test_unknown_zone_returns_geocheck_clarification() -> None:
+    assert _scenario_unknown_zone_returns_geocheck_clarification()
+
+
+def test_known_zone_canonicalizes_and_passes() -> None:
+    assert _scenario_known_zone_canonicalizes_and_passes()
 
 
 if __name__ == "__main__":
